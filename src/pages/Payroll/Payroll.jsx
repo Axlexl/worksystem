@@ -1,20 +1,27 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useCallback } from "react";
 import { useOutletContext } from "react-router-dom";
 import dayjs from "dayjs";
 import {
   Button, Chip, Dialog, DialogActions, DialogContent,
   DialogTitle, Divider, Paper, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow,
+  TableContainer, TableHead, TableRow, ToggleButton, ToggleButtonGroup,
 } from "@mui/material";
 import {
   MdAccountBalanceWallet, MdPlayArrow, MdPeople, MdTrendingUp,
   MdRemoveCircle, MdExpandMore, MdExpandLess, MdDeleteOutline,
-  MdDeleteForever, MdPrint,
+  MdDeleteForever, MdPrint, MdChevronLeft, MdChevronRight, MdEdit,
 } from "react-icons/md";
 import { useThemeMode } from "../../context/ThemeContext";
 import {
-  dbAddPayrollRecord, dbDeletePayrollRecord,
+  dbAddPayrollRecord, dbDeletePayrollRecord, dbGetPayrollWorkerRows,
+  dbSetAttendance, dbUpdatePayrollRecord,
 } from "../../services/db.service";
+
+// Returns the Saturday that ends the pay week for a given dayjs date
+function getSaturday(d) {
+  const day = d.day(); // 0=Sun … 6=Sat
+  return d.add((6 - day + 7) % 7 === 0 ? 0 : (6 - day + 7) % 7, "day");
+}
 
 function SummaryCard({ icon: Icon, label, value, iconBg, iconColor, highlight, darkMode }) {
   const cardBg     = highlight ? "linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%)" : (darkMode ? "#1E293B" : "#FFFFFF");
@@ -36,7 +43,7 @@ function SummaryCard({ icon: Icon, label, value, iconBg, iconColor, highlight, d
 }
 
 function Payroll() {
-  const { workers, attendanceRecords, userId, payrollHistory, setPayrollHistory } = useOutletContext();
+  const { workers, attendanceRecords, setAttendanceRecords, userId, payrollHistory, setPayrollHistory } = useOutletContext();
   const { darkMode } = useThemeMode();
 
   const cardBg      = darkMode ? "#1E293B" : "#FFFFFF";
@@ -68,11 +75,17 @@ function Payroll() {
     "& .MuiTableRow-root:hover": { background: darkMode ? "#1E293B" : "#F8FAFC" },
   };
 
-  const today = dayjs();
-  const daysSinceSaturday = (today.day() + 1) % 7;
-  const lastSaturday   = today.subtract(daysSinceSaturday, "day");
-  const payPeriodStart = lastSaturday.subtract(5, "day");
+  // ── Week navigation ────────────────────────────────────────────────────────
+  // weekOffset 0 = current week, -1 = last week, -2 = two weeks ago, etc.
+  const [weekOffset, setWeekOffset] = useState(0);
+
+  const today        = dayjs();
+  const thisSaturday = getSaturday(today);                          // Saturday of current week
+  const selectedSat  = thisSaturday.add(weekOffset * 7, "day");    // Saturday of selected week
+  const lastSaturday   = selectedSat;
+  const payPeriodStart = selectedSat.subtract(5, "day");           // Mon before that Saturday
   const periodDates    = Array.from({ length: 6 }, (_, i) => payPeriodStart.add(i, "day"));
+  const isCurrentWeek  = weekOffset === 0;
 
   const getWeekRange = (payDate) => {
     const end = dayjs(payDate);
@@ -109,6 +122,11 @@ function Payroll() {
   const [confirmDeletePayroll, setConfirmDeletePayroll] = useState(null);
   const [printDialogOpen,      setPrintDialogOpen]      = useState(false);
   const [printRecord,          setPrintRecord]          = useState(null);
+  // Cache of saved worker-row snapshots keyed by payroll record id
+  const [recordRows,           setRecordRows]           = useState({});
+  // Edit payroll record
+  const [editPayrollRecord,    setEditPayrollRecord]    = useState(null); // { record, fields }
+  const [editPayrollSaving,    setEditPayrollSaving]    = useState(false);
   const [receiptEdits,         setReceiptEdits]         = useState({
     companyName: "WorkSystem Construction",
     companySubtitle: "PAYSLIP / SALARY VOUCHER",
@@ -117,7 +135,89 @@ function Payroll() {
   });
 
   const printRef = useRef(null);
-  const toggleRecord = (id) => setExpandedRecord((prev) => (prev === id ? null : id));
+
+  // ── Attendance edit state ──────────────────────────────────────────────────
+  // editWorker: { worker, localStatus: { "YYYY-MM-DD": status } }
+  const [editWorker, setEditWorker] = useState(null);
+
+  const openEditWorker = (worker) => {
+    // Pre-fill local status from current attendanceRecords for the selected week
+    const local = {};
+    periodDates.forEach((d) => {
+      const key = d.format("YYYY-MM-DD");
+      local[key] = attendanceRecords[key]?.[worker.id] || "";
+    });
+    setEditWorker({ worker, localStatus: local });
+  };
+
+  const handleEditStatusChange = (dateKey, val) => {
+    if (!val) return;
+    setEditWorker((prev) => ({ ...prev, localStatus: { ...prev.localStatus, [dateKey]: val } }));
+  };
+
+  const handleSaveEditWorker = async () => {
+    if (!editWorker) return;
+    const { worker, localStatus } = editWorker;
+    for (const [dateKey, status] of Object.entries(localStatus)) {
+      if (status) {
+        await dbSetAttendance(userId, worker.id, dateKey, status);
+        setAttendanceRecords((prev) => ({
+          ...prev,
+          [dateKey]: { ...(prev[dateKey] || {}), [worker.id]: status },
+        }));
+      }
+    }
+    setEditWorker(null);
+  };
+
+  // ── Edit a saved payroll record ────────────────────────────────────────────
+  const openEditPayrollRecord = (record) => {
+    setEditPayrollRecord({
+      record,
+      fields: {
+        payDate:         record.payDate,
+        periodStart:     record.periodStart,
+        periodEnd:       record.periodEnd,
+        grossPay:        String(record.grossPay),
+        cashAdvance:     String(record.cashAdvance),
+        absentDeduction: String(record.absentDeduction),
+        netPay:          String(record.netPay),
+      },
+    });
+  };
+
+  const handleSaveEditPayrollRecord = async () => {
+    if (!editPayrollRecord) return;
+    setEditPayrollSaving(true);
+    const { record, fields } = editPayrollRecord;
+    const updated = {
+      payDate:         fields.payDate,
+      periodStart:     fields.periodStart,
+      periodEnd:       fields.periodEnd,
+      workerCount:     record.workerCount,
+      grossPay:        Number(fields.grossPay)        || 0,
+      cashAdvance:     Number(fields.cashAdvance)     || 0,
+      absentDeduction: Number(fields.absentDeduction) || 0,
+      netPay:          Number(fields.netPay)          || 0,
+    };
+    const saved = await dbUpdatePayrollRecord(userId, record.id, updated);
+    setPayrollHistory((prev) => prev.map((r) => r.id === record.id ? { ...r, ...updated } : r));
+    setEditPayrollSaving(false);
+    setEditPayrollRecord(null);
+  };
+  const toggleRecord = useCallback(async (id) => {
+    setExpandedRecord((prev) => {
+      if (prev === id) return null;
+      return id;
+    });
+    // Load snapshot rows if not yet cached
+    if (!recordRows[id]) {
+      const rows = await dbGetPayrollWorkerRows(userId, id);
+      if (Array.isArray(rows) && rows.length > 0) {
+        setRecordRows((prev) => ({ ...prev, [id]: rows }));
+      }
+    }
+  }, [recordRows, userId]);
 
   const handleDeletePayrollRecord = async () => {
     if (!confirmDeletePayroll) return;
@@ -137,13 +237,23 @@ function Payroll() {
       cashAdvance:      totalAdvance,
       absentDeduction:  totalAbsent,
       netPay:           totalNet,
+      // Snapshot every worker's current figures at the time of payroll
+      workerRows:       payrollRows,
     };
     const saved = await dbAddPayrollRecord(userId, rec);
     setPayrollHistory((prev) => [saved, ...prev]);
+    // Cache the snapshot rows immediately so accordion shows them right away
+    setRecordRows((prev) => ({ ...prev, [saved.id]: payrollRows }));
     setExpandedRecord(saved.id);
+    // Jump back to current week after running payroll for a past week
+    setWeekOffset(0);
   };
 
-  const getWorkerRowsForRecord = (record) => {
+  // Returns saved snapshot rows if available, otherwise falls back to live recalculation
+  const getWorkerRowsForRecord = useCallback((record) => {
+    const cached = recordRows[record.id];
+    if (cached && cached.length > 0) return cached;
+    // Fallback: live recalculate (for old records saved before this fix)
     const dates = getWeekRange(record.payDate);
     return workers.map((worker) => {
       const grossPay        = worker.dailyRate * 6;
@@ -152,9 +262,21 @@ function Payroll() {
       const netPay          = Math.max(grossPay - absentDeduction - worker.cashAdvance, 0);
       return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded: recordedInRange(worker.id, dates) };
     });
-  };
+  }, [recordRows, workers, attendanceRecords]);
 
-  const handleOpenPrint = (record) => {    setPrintRecord({ record, rows: getWorkerRowsForRecord(record) });
+  const handleOpenPrint = async (record) => {
+    // Make sure rows are loaded
+    let rows = recordRows[record.id];
+    if (!rows || rows.length === 0) {
+      const fetched = await dbGetPayrollWorkerRows(userId, record.id);
+      if (Array.isArray(fetched) && fetched.length > 0) {
+        rows = fetched;
+        setRecordRows((prev) => ({ ...prev, [record.id]: fetched }));
+      } else {
+        rows = getWorkerRowsForRecord(record);
+      }
+    }
+    setPrintRecord({ record, rows });
     setPrintDialogOpen(true);
   };
 
@@ -176,12 +298,40 @@ function Payroll() {
           <SummaryCard icon={MdAccountBalanceWallet} label="Net Payroll"   value={`₱${totalNet.toLocaleString()}`}                     highlight darkMode={darkMode} />
         </div>
 
-        {/* Info + Run Payroll */}
+        {/* Pay Period selector + Run Payroll */}
         <div style={{ background: cardBg, border: `1px solid ${cardBorder}`, borderRadius: "12px", padding: "18px 20px", display: "flex", alignItems: "flex-start", gap: "16px", boxShadow: shadow, flexWrap: "wrap", transition: "background 0.2s" }}>
           <div style={{ flex: 1, minWidth: "200px" }}>
-            <div style={{ fontWeight: 700, fontSize: "0.9375rem", color: textPrimary, marginBottom: "4px" }}>
-              Pay Period: {payPeriodStart.format("MMM D")} – {lastSaturday.format("MMM D, YYYY")} (6 days)
+            {/* Week navigator */}
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+              <button
+                onClick={() => setWeekOffset((w) => w - 1)}
+                style={{ width: "30px", height: "30px", borderRadius: "7px", border: `1px solid ${cardBorder}`, background: "transparent", color: textPrimary, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                title="Previous week"
+              ><MdChevronLeft size={18} /></button>
+
+              <div style={{ fontWeight: 700, fontSize: "0.9375rem", color: textPrimary }}>
+                {isCurrentWeek
+                  ? `Current Week: ${payPeriodStart.format("MMM D")} – ${lastSaturday.format("MMM D, YYYY")}`
+                  : `Week of ${payPeriodStart.format("MMM D")} – ${lastSaturday.format("MMM D, YYYY")}`}
+              </div>
+
+              <button
+                onClick={() => setWeekOffset((w) => Math.min(w + 1, 0))}
+                disabled={isCurrentWeek}
+                style={{ width: "30px", height: "30px", borderRadius: "7px", border: `1px solid ${cardBorder}`, background: "transparent", color: isCurrentWeek ? (darkMode ? "#334155" : "#CBD5E1") : textPrimary, display: "flex", alignItems: "center", justifyContent: "center", cursor: isCurrentWeek ? "not-allowed" : "pointer" }}
+                title="Next week"
+              ><MdChevronRight size={18} /></button>
+
+              {!isCurrentWeek && (
+                <button
+                  onClick={() => setWeekOffset(0)}
+                  style={{ padding: "3px 10px", borderRadius: "6px", border: `1px solid ${cardBorder}`, background: "transparent", color: darkMode ? "#60A5FA" : "#2563EB", fontSize: "0.75rem", fontWeight: 600, cursor: "pointer" }}
+                >
+                  Back to Current
+                </button>
+              )}
             </div>
+
             <ul style={{ margin: 0, paddingLeft: "18px", listStyle: "disc", display: "flex", flexDirection: "column", gap: "4px" }}>
               {["Absent days are deducted from salary; Late and Leave are not.", "Unmarked days do not count as absent unless explicitly marked.", "Cash advances are deducted from net pay every Saturday."].map((tip, i) => (
                 <li key={i} style={{ fontSize: "0.8125rem", color: textMuted }}>{tip}</li>
@@ -189,49 +339,127 @@ function Payroll() {
             </ul>
           </div>
           <Button variant="contained" startIcon={<MdPlayArrow size={18} />} onClick={handleRunPayroll} sx={{ flexShrink: 0 }}>
-            Run Payroll Now
+            Run Payroll for This Week
           </Button>
         </div>
 
-        {/* Current Period Breakdown */}
+        {/* Period Breakdown — per-worker attendance dashboard */}
         <div style={{ background: cardBg, border: `1px solid ${cardBorder}`, borderRadius: "14px", boxShadow: shadow, overflow: "hidden", transition: "background 0.2s" }}>
-          <div style={{ padding: "16px 20px", borderBottom: `1px solid ${rowDivider}` }}>
-            <div style={{ fontWeight: 700, fontSize: "0.9375rem", color: textPrimary }}>Current Pay Period Breakdown</div>
-            <div style={{ fontSize: "0.8125rem", color: textSub, marginTop: "2px" }}>{payPeriodStart.format("MMM D")} – {lastSaturday.format("MMM D, YYYY")} · 6 working days</div>
+          <div style={{ padding: "16px 20px", borderBottom: `1px solid ${rowDivider}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: "0.9375rem", color: textPrimary }}>
+                {isCurrentWeek ? "Current Pay Period Breakdown" : `Pay Period Breakdown · ${payPeriodStart.format("MMM D")} – ${lastSaturday.format("MMM D, YYYY")}`}
+              </div>
+              <div style={{ fontSize: "0.8125rem", color: textSub, marginTop: "2px" }}>
+                {payPeriodStart.format("MMM D")} – {lastSaturday.format("MMM D, YYYY")} · 6 working days · Click <strong>Edit</strong> to fix attendance
+              </div>
+            </div>
           </div>
-          <TableContainer component={Paper} elevation={0} sx={{ border: "none", borderRadius: 0, ...tableSx }}>
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableCell>Worker</TableCell><TableCell>Position</TableCell><TableCell>Daily Rate</TableCell>
-                  <TableCell>Gross Pay</TableCell><TableCell>Recorded</TableCell><TableCell>Absent</TableCell>
-                  <TableCell>Deduction</TableCell><TableCell>Advance</TableCell><TableCell>Net Pay</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {payrollRows.map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell>
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <div style={{ width: "30px", height: "30px", borderRadius: "50%", background: `hsl(${(row.id * 47) % 360}, 60%, ${darkMode ? "45%" : "50%"})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.75rem", fontWeight: 700, color: "#fff", flexShrink: 0 }}>
-                          {row.name.charAt(0)}
-                        </div>
-                        <span style={{ fontWeight: 600, color: textPrimary }}>{row.name}</span>
+
+          {/* Day header row */}
+          <div style={{ display: "grid", gridTemplateColumns: "200px repeat(6, 1fr) 80px 80px 90px 100px 36px", gap: "0", background: headBg, borderBottom: `1px solid ${cardBorder}` }}>
+            <div style={{ padding: "8px 14px", fontSize: "0.6875rem", fontWeight: 700, color: darkMode ? "#64748B" : "#64748B", textTransform: "uppercase", letterSpacing: "0.05em" }}>Worker</div>
+            {periodDates.map((d) => (
+              <div key={d.format()} style={{ padding: "8px 4px", fontSize: "0.625rem", fontWeight: 700, color: darkMode ? "#64748B" : "#64748B", textTransform: "uppercase", letterSpacing: "0.04em", textAlign: "center" }}>
+                <div>{d.format("ddd")}</div>
+                <div style={{ fontWeight: 400, color: darkMode ? "#475569" : "#94A3B8" }}>{d.format("M/D")}</div>
+              </div>
+            ))}
+            <div style={{ padding: "8px 6px", fontSize: "0.6875rem", fontWeight: 700, color: darkMode ? "#64748B" : "#64748B", textTransform: "uppercase", textAlign: "center", letterSpacing: "0.04em" }}>Absent</div>
+            <div style={{ padding: "8px 6px", fontSize: "0.6875rem", fontWeight: 700, color: darkMode ? "#64748B" : "#64748B", textTransform: "uppercase", textAlign: "right", letterSpacing: "0.04em" }}>Deduction</div>
+            <div style={{ padding: "8px 6px", fontSize: "0.6875rem", fontWeight: 700, color: darkMode ? "#64748B" : "#64748B", textTransform: "uppercase", textAlign: "right", letterSpacing: "0.04em" }}>Advance</div>
+            <div style={{ padding: "8px 14px", fontSize: "0.6875rem", fontWeight: 700, color: darkMode ? "#64748B" : "#64748B", textTransform: "uppercase", textAlign: "right", letterSpacing: "0.04em" }}>Net Pay</div>
+            <div />
+          </div>
+
+          {payrollRows.map((row, idx) => {
+            // Status colors per day
+            const STATUS_COLOR = {
+              Present: { bg: darkMode ? "rgba(5,150,105,0.2)"  : "#DCFCE7", text: darkMode ? "#34D399" : "#15803D" },
+              Late:    { bg: darkMode ? "rgba(217,119,6,0.2)"  : "#FEF3C7", text: darkMode ? "#FBBF24" : "#B45309" },
+              Leave:   { bg: darkMode ? "rgba(100,116,139,0.2)": "#F1F5F9", text: darkMode ? "#94A3B8" : "#475569" },
+              Absent:  { bg: darkMode ? "rgba(220,38,38,0.2)"  : "#FEE2E2", text: darkMode ? "#F87171" : "#B91C1C" },
+              "":      { bg: darkMode ? "#1E293B"               : "#F8FAFC", text: darkMode ? "#334155" : "#CBD5E1" },
+            };
+
+            return (
+              <div key={row.id} style={{ display: "grid", gridTemplateColumns: "200px repeat(6, 1fr) 80px 80px 90px 100px 36px", gap: "0", borderBottom: idx < payrollRows.length - 1 ? `1px solid ${rowDivider}` : "none", background: cardBg, alignItems: "center" }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = darkMode ? "#1E293B" : "#F8FAFC")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = cardBg)}
+              >
+                {/* Worker name */}
+                <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <div style={{ width: "30px", height: "30px", borderRadius: "50%", background: `hsl(${(row.id * 47) % 360}, 60%, ${darkMode ? "45%" : "50%"})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.75rem", fontWeight: 700, color: "#fff", flexShrink: 0 }}>
+                    {row.name.charAt(0)}
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: "0.875rem", color: textPrimary, lineHeight: 1.2 }}>{row.name}</div>
+                    <div style={{ fontSize: "0.6875rem", color: textSub }}>{row.position} · ₱{row.dailyRate.toLocaleString()}/day</div>
+                  </div>
+                </div>
+
+                {/* Per-day attendance pills */}
+                {periodDates.map((d) => {
+                  const key    = d.format("YYYY-MM-DD");
+                  const status = attendanceRecords[key]?.[row.id] || "";
+                  const colors = STATUS_COLOR[status] || STATUS_COLOR[""];
+                  return (
+                    <div key={key} style={{ display: "flex", justifyContent: "center", alignItems: "center", padding: "6px 2px" }}>
+                      <div style={{ padding: "3px 7px", borderRadius: "6px", background: colors.bg, color: colors.text, fontSize: "0.625rem", fontWeight: 700, textAlign: "center", minWidth: "44px", lineHeight: 1.4, letterSpacing: "0.02em" }}>
+                        {status || "—"}
                       </div>
-                    </TableCell>
-                    <TableCell sx={{ color: darkMode ? "#94A3B8" : undefined }}>{row.position}</TableCell>
-                    <TableCell sx={{ color: textPrimary }}>₱{row.dailyRate.toLocaleString()}</TableCell>
-                    <TableCell sx={{ color: textPrimary }}>₱{row.grossPay.toLocaleString()}</TableCell>
-                    <TableCell sx={{ color: darkMode ? "#94A3B8" : undefined }}>{row.daysRecorded}/6</TableCell>
-                    <TableCell>{row.absentDays > 0 ? <Chip label={row.absentDays} color="error" size="small" /> : <Chip label="0" color="success" size="small" />}</TableCell>
-                    <TableCell style={{ color: row.absentDeduction > 0 ? (darkMode ? "#F87171" : "#DC2626") : (darkMode ? "#94A3B8" : "inherit") }}>₱{row.absentDeduction.toLocaleString()}</TableCell>
-                    <TableCell style={{ color: row.cashAdvance > 0 ? (darkMode ? "#FBBF24" : "#D97706") : (darkMode ? "#94A3B8" : "inherit") }}>₱{row.cashAdvance.toLocaleString()}</TableCell>
-                    <TableCell style={{ fontWeight: 700, color: textPrimary }}>₱{row.netPay.toLocaleString()}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
+                    </div>
+                  );
+                })}
+
+                {/* Absent count */}
+                <div style={{ textAlign: "center", padding: "10px 6px" }}>
+                  {row.absentDays > 0
+                    ? <Chip label={row.absentDays} color="error" size="small" />
+                    : <Chip label="0" color="success" size="small" />}
+                </div>
+
+                {/* Deduction */}
+                <div style={{ padding: "10px 6px", fontSize: "0.875rem", fontWeight: row.absentDeduction > 0 ? 600 : 400, color: row.absentDeduction > 0 ? (darkMode ? "#F87171" : "#DC2626") : textSub, textAlign: "right" }}>
+                  ₱{row.absentDeduction.toLocaleString()}
+                </div>
+
+                {/* Advance */}
+                <div style={{ padding: "10px 6px", fontSize: "0.875rem", fontWeight: row.cashAdvance > 0 ? 600 : 400, color: row.cashAdvance > 0 ? (darkMode ? "#FBBF24" : "#D97706") : textSub, textAlign: "right" }}>
+                  ₱{row.cashAdvance.toLocaleString()}
+                </div>
+
+                {/* Net pay */}
+                <div style={{ padding: "10px 14px", fontSize: "0.9375rem", fontWeight: 800, color: darkMode ? "#34D399" : "#059669", textAlign: "right" }}>
+                  ₱{row.netPay.toLocaleString()}
+                </div>
+
+                {/* Edit button */}
+                <div style={{ padding: "10px 8px", display: "flex", justifyContent: "center" }}>
+                  <button
+                    onClick={() => openEditWorker(row)}
+                    title="Edit attendance for this worker"
+                    style={{ width: "28px", height: "28px", borderRadius: "7px", border: "none", background: darkMode ? "rgba(37,99,235,0.15)" : "#EFF6FF", color: darkMode ? "#60A5FA" : "#2563EB", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = darkMode ? "rgba(37,99,235,0.3)" : "#DBEAFE")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = darkMode ? "rgba(37,99,235,0.15)" : "#EFF6FF")}
+                  >
+                    <MdEdit size={14} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Totals footer */}
+          <div style={{ display: "grid", gridTemplateColumns: "200px repeat(6, 1fr) 80px 80px 90px 100px 36px", background: headBg, borderTop: `1px solid ${cardBorder}` }}>
+            <div style={{ padding: "10px 14px", fontSize: "0.8125rem", fontWeight: 700, color: textPrimary }}>Totals</div>
+            {periodDates.map((d) => <div key={d.format()} />)}
+            <div />
+            <div style={{ padding: "10px 6px", fontSize: "0.8125rem", fontWeight: 700, color: darkMode ? "#F87171" : "#DC2626", textAlign: "right" }}>₱{totalAbsent.toLocaleString()}</div>
+            <div style={{ padding: "10px 6px", fontSize: "0.8125rem", fontWeight: 700, color: darkMode ? "#FBBF24" : "#D97706", textAlign: "right" }}>₱{totalAdvance.toLocaleString()}</div>
+            <div style={{ padding: "10px 14px", fontSize: "0.9375rem", fontWeight: 800, color: darkMode ? "#34D399" : "#059669", textAlign: "right" }}>₱{totalNet.toLocaleString()}</div>
+            <div />
+          </div>
         </div>
 
         {/* Payroll Records accordion */}
@@ -253,7 +481,7 @@ function Payroll() {
                   role="button" tabIndex={0}
                   onClick={() => toggleRecord(record.id)}
                   onKeyDown={(e) => e.key === "Enter" && toggleRecord(record.id)}
-                  style={{ background: isOpen ? accordionOpenBg : cardBg, cursor: "pointer", padding: "14px 20px", display: "grid", gridTemplateColumns: "1fr 80px 90px 90px 90px 90px 40px 36px 36px", gap: "12px", alignItems: "center", borderLeft: `4px solid ${isOpen ? "#2563EB" : "transparent"}`, transition: "background 0.15s", userSelect: "none" }}
+                  style={{ background: isOpen ? accordionOpenBg : cardBg, cursor: "pointer", padding: "14px 20px", display: "grid", gridTemplateColumns: "1fr 80px 90px 90px 90px 90px 40px 36px 36px 36px", gap: "12px", alignItems: "center", borderLeft: `4px solid ${isOpen ? "#2563EB" : "transparent"}`, transition: "background 0.15s", userSelect: "none" }}
                   onMouseEnter={(e) => { if (!isOpen) e.currentTarget.style.background = darkMode ? "#1E293B" : "#F8FAFC"; }}
                   onMouseLeave={(e) => { if (!isOpen) e.currentTarget.style.background = cardBg; }}
                 >
@@ -270,6 +498,11 @@ function Payroll() {
                   <div style={{ width: "28px", height: "28px", borderRadius: "7px", background: isOpen ? chevronOpenBg : chevronCloseBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     {isOpen ? <MdExpandLess size={18} color="#2563EB" /> : <MdExpandMore size={18} color={darkMode ? "#64748B" : "#64748B"} />}
                   </div>
+                  {/* Edit */}
+                  <button onClick={(e) => { e.stopPropagation(); openEditPayrollRecord(record); }} title="Edit record" style={{ width: "30px", height: "30px", borderRadius: "7px", border: "none", background: darkMode ? "rgba(37,99,235,0.12)" : "#EFF6FF", color: darkMode ? "#60A5FA" : "#2563EB", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = darkMode ? "rgba(37,99,235,0.25)" : "#DBEAFE")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = darkMode ? "rgba(37,99,235,0.12)" : "#EFF6FF")}
+                  ><MdEdit size={14} /></button>
                   {/* Delete */}
                   <button onClick={(e) => { e.stopPropagation(); setConfirmDeletePayroll(record); }} title="Delete" style={{ width: "30px", height: "30px", borderRadius: "7px", border: "none", background: darkMode ? "rgba(220,38,38,0.12)" : "#FFF1F2", color: darkMode ? "#F87171" : "#DC2626", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = darkMode ? "rgba(220,38,38,0.25)" : "#FFE4E6")}
@@ -457,6 +690,136 @@ function Payroll() {
           );
         })()}
       </div>
+
+      {/* ── Edit Payroll Record Dialog ─────────────────────────────────────── */}
+      <Dialog open={Boolean(editPayrollRecord)} onClose={() => setEditPayrollRecord(null)} maxWidth="xs" fullWidth
+        PaperProps={{ style: { background: cardBg, border: `1px solid ${cardBorder}` } }}>
+        <DialogTitle sx={{ color: textPrimary, background: cardBg, borderBottom: `1px solid ${cardBorder}`, pb: 1.5 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div style={{ width: "34px", height: "34px", borderRadius: "8px", background: darkMode ? "rgba(37,99,235,0.15)" : "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <MdEdit size={17} color={darkMode ? "#60A5FA" : "#2563EB"} />
+            </div>
+            <div>
+              <div style={{ fontSize: "1rem", fontWeight: 700 }}>Edit Payroll Record</div>
+              <div style={{ fontSize: "0.75rem", color: textSub, fontWeight: 400 }}>
+                {editPayrollRecord && `${dayjs(editPayrollRecord.record.periodStart).format("MMM D")} – ${dayjs(editPayrollRecord.record.periodEnd).format("MMM D, YYYY")}`}
+              </div>
+            </div>
+          </div>
+        </DialogTitle>
+        <DialogContent sx={{ background: cardBg, pt: "20px !important" }}>
+          {editPayrollRecord && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+              {/* Dates */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                {[
+                  { label: "Period Start", key: "periodStart" },
+                  { label: "Period End",   key: "periodEnd"   },
+                ].map(({ label, key }) => (
+                  <div key={key}>
+                    <label style={{ fontSize: "0.8125rem", fontWeight: 600, color: textSub, display: "block", marginBottom: "5px" }}>{label}</label>
+                    <input type="date" value={editPayrollRecord.fields[key]}
+                      onChange={(e) => setEditPayrollRecord((p) => ({ ...p, fields: { ...p.fields, [key]: e.target.value } }))}
+                      style={{ width: "100%", padding: "8px 10px", borderRadius: "7px", border: `1px solid ${cardBorder}`, background: darkMode ? "#0F172A" : "#F8FAFC", color: textPrimary, fontSize: "0.875rem", outline: "none", boxSizing: "border-box" }}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div>
+                <label style={{ fontSize: "0.8125rem", fontWeight: 600, color: textSub, display: "block", marginBottom: "5px" }}>Pay Date</label>
+                <input type="date" value={editPayrollRecord.fields.payDate}
+                  onChange={(e) => setEditPayrollRecord((p) => ({ ...p, fields: { ...p.fields, payDate: e.target.value } }))}
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: "7px", border: `1px solid ${cardBorder}`, background: darkMode ? "#0F172A" : "#F8FAFC", color: textPrimary, fontSize: "0.875rem", outline: "none", boxSizing: "border-box" }}
+                />
+              </div>
+              <div style={{ height: "1px", background: cardBorder }} />
+              {/* Amounts */}
+              {[
+                { label: "Gross Pay (₱)",        key: "grossPay" },
+                { label: "Cash Advance (₱)",     key: "cashAdvance" },
+                { label: "Absent Deduction (₱)", key: "absentDeduction" },
+                { label: "Net Pay (₱)",          key: "netPay" },
+              ].map(({ label, key }) => (
+                <div key={key}>
+                  <label style={{ fontSize: "0.8125rem", fontWeight: 600, color: textSub, display: "block", marginBottom: "5px" }}>{label}</label>
+                  <input type="number" min="0" value={editPayrollRecord.fields[key]}
+                    onChange={(e) => setEditPayrollRecord((p) => ({ ...p, fields: { ...p.fields, [key]: e.target.value } }))}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "7px", border: `1px solid ${cardBorder}`, background: darkMode ? "#0F172A" : "#F8FAFC", color: textPrimary, fontSize: "0.875rem", outline: "none", boxSizing: "border-box" }}
+                  />
+                </div>
+              ))}
+              <div style={{ background: darkMode ? "#0F172A" : "#FFF7ED", border: `1px solid ${darkMode ? "#334155" : "#FED7AA"}`, borderRadius: "8px", padding: "10px 12px", fontSize: "0.75rem", color: darkMode ? "#FBBF24" : "#B45309", lineHeight: 1.5 }}>
+                ⚠️ Editing these values only updates the saved record totals. Worker row snapshots are not affected.
+              </div>
+            </div>
+          )}
+        </DialogContent>
+        <Divider sx={{ borderColor: cardBorder }} />
+        <DialogActions sx={{ background: cardBg, px: 3, py: 2, gap: 1 }}>
+          <Button onClick={() => setEditPayrollRecord(null)} variant="outlined">Cancel</Button>
+          <Button variant="contained" onClick={handleSaveEditPayrollRecord} disabled={editPayrollSaving}>
+            {editPayrollSaving ? "Saving…" : "Save Changes"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ── Edit Attendance Dialog ─────────────────────────────────────────── */}
+      <Dialog open={Boolean(editWorker)} onClose={() => setEditWorker(null)} maxWidth="sm" fullWidth
+        PaperProps={{ style: { background: cardBg, border: `1px solid ${cardBorder}` } }}>
+        <DialogTitle sx={{ color: textPrimary, background: cardBg, borderBottom: `1px solid ${cardBorder}`, pb: 1.5 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div style={{ width: "34px", height: "34px", borderRadius: "8px", background: darkMode ? "rgba(37,99,235,0.15)" : "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <MdEdit size={17} color={darkMode ? "#60A5FA" : "#2563EB"} />
+            </div>
+            <div>
+              <div style={{ fontSize: "1rem", fontWeight: 700 }}>Edit Attendance</div>
+              <div style={{ fontSize: "0.75rem", color: textSub, fontWeight: 400 }}>
+                {editWorker?.worker.name} · {payPeriodStart.format("MMM D")} – {lastSaturday.format("MMM D, YYYY")}
+              </div>
+            </div>
+          </div>
+        </DialogTitle>
+        <DialogContent sx={{ background: cardBg, pt: "20px !important" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            {periodDates.map((d) => {
+              const key     = d.format("YYYY-MM-DD");
+              const current = editWorker?.localStatus[key] || "";
+              return (
+                <div key={key} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  <div style={{ minWidth: "90px" }}>
+                    <div style={{ fontSize: "0.8125rem", fontWeight: 700, color: textPrimary }}>{d.format("ddd")}</div>
+                    <div style={{ fontSize: "0.75rem", color: textSub }}>{d.format("MMM D, YYYY")}</div>
+                  </div>
+                  <ToggleButtonGroup
+                    value={current}
+                    exclusive
+                    onChange={(_, val) => { if (val) handleEditStatusChange(key, val); }}
+                    size="small"
+                    sx={{
+                      flexWrap: "wrap",
+                      "& .MuiToggleButton-root": {
+                        fontSize: "0.75rem", px: "10px",
+                        color: darkMode ? "#94A3B8" : undefined,
+                        borderColor: darkMode ? "#334155" : undefined,
+                        "&.Mui-selected": { background: darkMode ? "rgba(37,99,235,0.2)" : undefined, color: darkMode ? "#60A5FA" : undefined },
+                      },
+                    }}
+                  >
+                    {["Present", "Absent", "Late", "Leave"].map((opt) => (
+                      <ToggleButton key={opt} value={opt}>{opt}</ToggleButton>
+                    ))}
+                  </ToggleButtonGroup>
+                </div>
+              );
+            })}
+          </div>
+        </DialogContent>
+        <Divider sx={{ borderColor: cardBorder }} />
+        <DialogActions sx={{ background: cardBg, px: 3, py: 2, gap: 1 }}>
+          <Button onClick={() => setEditWorker(null)} variant="outlined">Cancel</Button>
+          <Button variant="contained" onClick={handleSaveEditWorker}>Save Changes</Button>
+        </DialogActions>
+      </Dialog>
 
       {/* ── Delete confirm ─────────────────────────────────────────────────── */}
       <Dialog open={Boolean(confirmDeletePayroll)} onClose={() => setConfirmDeletePayroll(null)} maxWidth="xs" fullWidth PaperProps={{ style: { background: cardBg, border: `1px solid ${cardBorder}` } }}>

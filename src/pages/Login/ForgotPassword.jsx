@@ -41,14 +41,25 @@ export default function ForgotPassword({ onBack, onDone }) {
     const res = await forgotPassword({ email: email.trim() });
     setLoading(false);
     if (!res.ok) { setError(res.error || "Something went wrong."); return; }
+    // If server returned an OTP (dev / ethereal), show it in the UI for quick recovery
+    if (res.otp) {
+      setResendMsg(`Dev code: ${res.otp}`);
+      setTimeout(() => setResendMsg(""), 10000);
+    }
     setStep("otp");
   };
 
   const handleResend = async () => {
     setResendMsg(""); setError("");
     const res = await forgotPassword({ email: email.trim() });
-    if (res.ok) { setResendMsg("A new code was sent to your email."); setTimeout(() => setResendMsg(""), 5000); }
-    else setError(res.error || "Failed to resend.");
+    if (res.ok) {
+      if (res.otp) {
+        setResendMsg(`A new code was sent to your email. Dev code: ${res.otp}`);
+      } else {
+        setResendMsg("A new code was sent to your email.");
+      }
+      setTimeout(() => setResendMsg(""), 10000);
+    } else setError(res.error || "Failed to resend.");
   };
 
   const handleReset = async (e) => {

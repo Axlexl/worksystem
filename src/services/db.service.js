@@ -74,18 +74,38 @@ export async function dbGetPayrollRecords(userId) {
 }
 
 export async function dbAddPayrollRecord(userId, record) {
+  // record.workerRows is the per-worker snapshot array
   if (isElectron) return window.api.addPayrollRecord({ userId, record });
   const all  = lsGet(lsKey(userId, "payroll"), []);
   const created = { id: Date.now(), user_id: userId, ...record };
   lsSet(lsKey(userId, "payroll"), [created, ...all]);
+  // Persist worker row snapshots in localStorage too
+  if (Array.isArray(record.workerRows)) {
+    const key = lsKey(userId, `payroll_rows_${created.id}`);
+    lsSet(key, record.workerRows);
+  }
   return created;
+}
+
+export async function dbGetPayrollWorkerRows(userId, payrollId) {
+  if (isElectron) return window.api.getPayrollWorkerRows({ payrollId });
+  return lsGet(lsKey(userId, `payroll_rows_${payrollId}`), []);
 }
 
 export async function dbDeletePayrollRecord(userId, recordId) {
   if (isElectron) return window.api.deletePayrollRecord({ recordId });
   const all = lsGet(lsKey(userId, "payroll"), []);
   lsSet(lsKey(userId, "payroll"), all.filter((r) => r.id !== recordId));
+  localStorage.removeItem(lsKey(userId, `payroll_rows_${recordId}`));
   return { ok: true };
+}
+
+export async function dbUpdatePayrollRecord(userId, recordId, record) {
+  if (isElectron) return window.api.updatePayrollRecord({ recordId, record });
+  const all = lsGet(lsKey(userId, "payroll"), []);
+  const updated = all.map((r) => r.id === recordId ? { ...r, ...record } : r);
+  lsSet(lsKey(userId, "payroll"), updated);
+  return updated.find((r) => r.id === recordId);
 }
 
 // ── Cash Advance ──────────────────────────────────────────────────────────────

@@ -18,9 +18,7 @@
     "appId": "com.worksystem.app",
     "productName": "WorkSystem",
     "copyright": "Copyright © 2025 WorkSystem",
-    "directories": {
-      "output": "release"
-    },
+    "directories": { "output": "release" },
     "files": [
       "dist/**/*",
       "electron/**/*",
@@ -29,35 +27,16 @@
       "node_modules/file-uri-to-path/**/*"
     ],
     "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "public/favicon.svg"
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "installerIcon": "public/favicon.svg",
-      "uninstallerIcon": "public/favicon.svg",
-      "installerHeaderIcon": "public/favicon.svg",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "WorkSystem"
     },
-    "extraResources": [
-      {
-        "from": "node_modules/better-sqlite3/build/Release",
-        "to": "better-sqlite3/build/Release",
-        "filter": [
-          "**/*.node"
-        ]
-      }
-    ],
+    "extraResources": [{ "from": "node_modules/better-sqlite3/build/Release", "to": "better-sqlite3/build/Release", "filter": ["**/*.node"] }],
     "asar": true,
     "compression": "maximum"
   },

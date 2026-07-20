@@ -1,18 +1,16 @@
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { validateSession } from "../services/auth.service";
 
 const AuthContext = createContext(null);
-
 const SESSION_KEY = "ws_session";
 
 function loadSession() {
   try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
+    const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const user = JSON.parse(raw);
-    // Validate the token hasn't expired
     if (!validateSession(user.token)) {
-      sessionStorage.removeItem(SESSION_KEY);
+      localStorage.removeItem(SESSION_KEY);
       return null;
     }
     return user;
@@ -26,13 +24,24 @@ export function AuthProvider({ children }) {
 
   const login = (userData) => {
     setUser(userData);
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(userData));
+    localStorage.setItem(SESSION_KEY, JSON.stringify(userData));
   };
 
   const logout = () => {
     setUser(null);
-    sessionStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(SESSION_KEY);
   };
+
+  // ── Auto-logout when Electron window closes ───────────────────────────────
+  useEffect(() => {
+    const isElectron = typeof window !== "undefined" && Boolean(window?.api?.onAppClose);
+    if (!isElectron) return;
+
+    window.api.onAppClose(() => {
+      // Clear session so next launch requires login
+      localStorage.removeItem(SESSION_KEY);
+    });
+  }, []);
 
   return (
     <AuthContext.Provider value={{ user, login, logout }}>

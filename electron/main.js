@@ -4,6 +4,8 @@ const fs         = require("fs");
 const Database   = require("better-sqlite3");
 const nodemailer = require("nodemailer");
 
+const isDev = process.env.NODE_ENV === "development" || process.env.ELECTRON_DEV === "1";
+
 // ── OTP store (in-memory, keyed by email, auto-expires) ───────────────────────
 const otpStore = new Map(); // email → { otp, expiresAt }
 
@@ -116,6 +118,23 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
+  CREATE TABLE IF NOT EXISTS payroll_worker_rows (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    payroll_id       INTEGER NOT NULL,
+    user_id          INTEGER NOT NULL,
+    worker_id        INTEGER NOT NULL,
+    name             TEXT NOT NULL,
+    position         TEXT NOT NULL DEFAULT '',
+    dailyRate        REAL NOT NULL DEFAULT 0,
+    grossPay         REAL NOT NULL DEFAULT 0,
+    absentDays       INTEGER NOT NULL DEFAULT 0,
+    absentDeduction  REAL NOT NULL DEFAULT 0,
+    cashAdvance      REAL NOT NULL DEFAULT 0,
+    netPay           REAL NOT NULL DEFAULT 0,
+    daysRecorded     INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (payroll_id) REFERENCES payroll_records(id) ON DELETE CASCADE
+  );
+
   CREATE TABLE IF NOT EXISTS cash_advance_history (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id     INTEGER NOT NULL,
@@ -183,21 +202,6 @@ ipcMain.handle("auth:register", (_, { companyName, ownerName, email, username, p
   }
 });
 
-// ── IPC: Change Password ──────────────────────────────────────────────────────
-ipcMain.handle("auth:changePassword", (_, { userId, currentPassword, newPassword }) => {
-  const row = db.prepare("SELECT id FROM users WHERE id = ? AND password = ?").get(userId, currentPassword);
-  if (!row) return { ok: false, error: "Current password is incorrect." };
-  db.prepare("UPDATE users SET password = ?, updatedAt = datetime('now') WHERE id = ?").run(newPassword, userId);
-  return { ok: true };
-});
-
-// ── IPC: Update Profile ───────────────────────────────────────────────────────
-ipcMain.handle("auth:updateProfile", (_, { userId, ownerName, email, company }) => {
-  db.prepare("UPDATE users SET ownerName = ?, email = ?, company = ?, updatedAt = datetime('now') WHERE id = ?")
-    .run(ownerName || "", email || "", company || "", userId);
-  return { ok: true, user: userById(userId) };
-});
-
 // ── IPC: Forgot Password — send OTP to registered email ──────────────────────
 ipcMain.handle("auth:forgotPassword", async (_, { email }) => {
   if (!email) return { ok: false, error: "Email address is required." };
@@ -241,12 +245,15 @@ ipcMain.handle("auth:forgotPassword", async (_, { email }) => {
     // Log Ethereal preview URL in dev
     const preview = nodemailer.getTestMessageUrl(info);
     if (preview) console.log("[WorkSystem] Password reset email preview:", preview);
+
+    const resp = { ok: true };
+    if (isDev || preview) resp.otp = otp;
+    return resp;
   } catch (err) {
     console.error("[WorkSystem] Failed to send reset email:", err.message);
+    if (isDev) return { ok: true, otp };
     return { ok: false, error: "Failed to send email. Check your email settings." };
   }
-
-  return { ok: true };
 });
 
 // ── IPC: Reset Password — verify OTP then set new password ───────────────────
@@ -366,12 +373,47 @@ ipcMain.handle("payroll:add", (_, { userId, record }) => {
   `).run(userId, record.payDate, record.periodStart, record.periodEnd,
         record.workerCount, record.grossPay, record.cashAdvance,
         record.absentDeduction, record.netPay);
-  return db.prepare("SELECT * FROM payroll_records WHERE id = ?").get(info.lastInsertRowid);
+  const saved = db.prepare("SELECT * FROM payroll_records WHERE id = ?").get(info.lastInsertRowid);
+
+  // Save worker row snapshots so history is accurate forever
+  if (Array.isArray(record.workerRows) && record.workerRows.length > 0) {
+    const insertRow = db.prepare(`
+      INSERT INTO payroll_worker_rows
+        (payroll_id, user_id, worker_id, name, position, dailyRate, grossPay, absentDays, absentDeduction, cashAdvance, netPay, daysRecorded)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const tx = db.transaction((rows) => {
+      for (const r of rows) {
+        insertRow.run(saved.id, userId, r.id, r.name, r.position || "", r.dailyRate,
+          r.grossPay, r.absentDays, r.absentDeduction, r.cashAdvance, r.netPay, r.daysRecorded);
+      }
+    });
+    tx(record.workerRows);
+  }
+
+  return saved;
 });
 
+ipcMain.handle("payroll:getWorkerRows", (_, { payrollId }) =>
+  db.prepare("SELECT * FROM payroll_worker_rows WHERE payroll_id = ? ORDER BY name").all(payrollId)
+);
+
 ipcMain.handle("payroll:delete", (_, { recordId }) => {
+  // worker rows cascade-delete automatically via FK
   db.prepare("DELETE FROM payroll_records WHERE id = ?").run(recordId);
   return { ok: true };
+});
+
+ipcMain.handle("payroll:update", (_, { recordId, record }) => {
+  db.prepare(`
+    UPDATE payroll_records SET
+      payDate=?, periodStart=?, periodEnd=?, workerCount=?,
+      grossPay=?, cashAdvance=?, absentDeduction=?, netPay=?
+    WHERE id=?
+  `).run(record.payDate, record.periodStart, record.periodEnd,
+         record.workerCount, record.grossPay, record.cashAdvance,
+         record.absentDeduction, record.netPay, recordId);
+  return db.prepare("SELECT * FROM payroll_records WHERE id = ?").get(recordId);
 });
 
 // ── IPC: Cash Advance ─────────────────────────────────────────────────────────
@@ -552,6 +594,18 @@ function createWindow() {
   } else {
     win.loadFile(path.join(__dirname, "../dist/index.html"));
   }
+
+  // ── Auto-logout on close: tell renderer to clear session before quitting ──
+  win.on("close", (e) => {
+    if (win && !win.isDestroyed()) {
+      e.preventDefault();
+      win.webContents.send("app:closing");
+      // Give renderer 300ms to clear localStorage, then close
+      setTimeout(() => {
+        if (win && !win.isDestroyed()) win.destroy();
+      }, 300);
+    }
+  });
 
   win.on("closed", () => { win = null; });
 }

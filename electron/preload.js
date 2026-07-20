@@ -23,9 +23,14 @@ contextBridge.exposeInMainWorld("api", {
   setManyAttendance: (a) => ipcRenderer.invoke("attendance:setMany", a),
 
   // ── Payroll ──────────────────────────────────────────────────────────────────
-  getPayrollRecords:   (a) => ipcRenderer.invoke("payroll:getAll", a),
-  addPayrollRecord:    (a) => ipcRenderer.invoke("payroll:add", a),
-  deletePayrollRecord: (a) => ipcRenderer.invoke("payroll:delete", a),
+  getPayrollRecords:    (a) => ipcRenderer.invoke("payroll:getAll", a),
+  addPayrollRecord:     (a) => ipcRenderer.invoke("payroll:add", a),
+  updatePayrollRecord:  (a) => ipcRenderer.invoke("payroll:update", a),
+  getPayrollWorkerRows: (a) => ipcRenderer.invoke("payroll:getWorkerRows", a),
+  deletePayrollRecord:  (a) => ipcRenderer.invoke("payroll:delete", a),
+
+  // ── App lifecycle ─────────────────────────────────────────────────────────
+  onAppClose: (cb) => ipcRenderer.on("app:closing", cb),
 
   // ── Cash Advance ─────────────────────────────────────────────────────────────
   getCashAdvanceHistory:  (a) => ipcRenderer.invoke("cashadvance:getHistory", a),

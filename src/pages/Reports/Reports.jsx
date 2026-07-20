@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import dayjs from "dayjs";
 import { MdAccountBalanceWallet, MdInventory2, MdExpandMore, MdExpandLess } from "react-icons/md";
 import { useThemeMode } from "../../context/ThemeContext";
+import { dbGetPayrollWorkerRows } from "../../services/db.service";
 
 // ── AccordionSection ──────────────────────────────────────────────────────────
 function AccordionSection({ icon: Icon, title, subtitle, iconBg, iconColor, accentColor, stats, children, isEmpty, emptyText, darkMode }) {
@@ -105,9 +106,8 @@ function ColHeader({ cols, darkMode }) {
 
 // ── Reports ───────────────────────────────────────────────────────────────────
 function Reports() {
-  const { materialHistory, payrollHistory, workers, attendanceRecords } = useOutletContext();
+  const { materialHistory, payrollHistory, workers, attendanceRecords, userId } = useOutletContext();
   const { darkMode } = useThemeMode();
-  const weekStart = dayjs().subtract(6, "day");
 
   // tokens
   const cardBg      = darkMode ? "#1E293B" : "#FFFFFF";
@@ -115,8 +115,8 @@ function Reports() {
   const textPrimary = darkMode ? "#F1F5F9" : "#0F172A";
   const textMuted   = darkMode ? "#64748B"  : "#64748B";
   const textSub     = darkMode ? "#94A3B8"  : "#94A3B8";
-  const detailHeadBlue   = darkMode ? "rgba(37,99,235,0.12)"  : "#EFF6FF";
-  const detailBorderBlue = darkMode ? "rgba(37,99,235,0.2)"   : "#DBEAFE";
+  const detailHeadBlue    = darkMode ? "rgba(37,99,235,0.12)"  : "#EFF6FF";
+  const detailBorderBlue  = darkMode ? "rgba(37,99,235,0.2)"   : "#DBEAFE";
   const detailHeadPurple   = darkMode ? "rgba(124,58,237,0.12)"  : "#F5F3FF";
   const detailBorderPurple = darkMode ? "rgba(124,58,237,0.2)"   : "#DDD6FE";
   const blueIconBg   = darkMode ? "rgba(37,99,235,0.15)"  : "#DBEAFE";
@@ -124,7 +124,22 @@ function Reports() {
   const purpleIconBg  = darkMode ? "rgba(124,58,237,0.15)" : "#EDE9FE";
   const purpleIconCol = darkMode ? "#A78BFA" : "#7C3AED";
 
-  // helpers
+  // ── Snapshot row cache ─────────────────────────────────────────────────────
+  const [rowCache, setRowCache] = useState({});
+
+  // Pre-load all payroll worker-row snapshots on mount
+  useEffect(() => {
+    if (!payrollHistory.length || !userId) return;
+    payrollHistory.forEach(async (record) => {
+      if (rowCache[record.id]) return;
+      const rows = await dbGetPayrollWorkerRows(userId, record.id);
+      if (Array.isArray(rows) && rows.length > 0) {
+        setRowCache((prev) => ({ ...prev, [record.id]: rows }));
+      }
+    });
+  }, [payrollHistory, userId]);
+
+  // Fallback: live recalculate when no snapshot saved (old records)
   const getWeekRange = (payDate) => {
     const end = dayjs(payDate);
     const start = end.subtract(5, "day");
@@ -136,88 +151,86 @@ function Reports() {
       return count + (status === "Present" || status === "Late" || status === "Leave" ? 0 : 1);
     }, 0);
   const recordedInRange = (workerId, dates) =>
-    dates.reduce((count, date) => {
-      return count + (attendanceRecords[date.format("YYYY-MM-DD")]?.[workerId] ? 1 : 0);
-    }, 0);
+    dates.reduce((count, date) => count + (attendanceRecords[date.format("YYYY-MM-DD")]?.[workerId] ? 1 : 0), 0);
+
   const getWorkerRowsForRecord = (record) => {
+    const cached = rowCache[record.id];
+    if (cached && cached.length > 0) return cached;
+    // Fallback live recalc for old records
     const dates = getWeekRange(record.payDate);
     return workers.map((worker) => {
-      const grossPay = worker.dailyRate * 6;
-      const absentDays = absentInRange(worker.id, dates);
+      const grossPay        = worker.dailyRate * 6;
+      const absentDays      = absentInRange(worker.id, dates);
       const absentDeduction = absentDays * worker.dailyRate;
-      const netPay = Math.max(grossPay - absentDeduction - worker.cashAdvance, 0);
+      const netPay          = Math.max(grossPay - absentDeduction - worker.cashAdvance, 0);
       return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded: recordedInRange(worker.id, dates) };
     });
   };
 
-  const weeklyMaterialRecords = useMemo(
-    () => materialHistory.filter((r) => dayjs(r.date).isSameOrAfter(weekStart, "day")),
-    [materialHistory]
-  );
-  const weeklyMaterialCost = useMemo(
-    () => weeklyMaterialRecords.reduce((sum, r) => sum + r.totalCost, 0),
-    [weeklyMaterialRecords]
-  );
+  // ── Totals — ALL TIME ──────────────────────────────────────────────────────
+  const allTimeGross    = useMemo(() => payrollHistory.reduce((s, r) => s + r.grossPay, 0),    [payrollHistory]);
+  const allTimeNet      = useMemo(() => payrollHistory.reduce((s, r) => s + r.netPay, 0),      [payrollHistory]);
+  const allTimeMaterial = useMemo(() => materialHistory.reduce((s, r) => s + r.totalCost, 0),  [materialHistory]);
+  const allTimeCombined = allTimeNet + allTimeMaterial;
+
+  // ── Material grouping ──────────────────────────────────────────────────────
   const materialByDate = useMemo(() => {
     const map = {};
-    weeklyMaterialRecords.forEach((r) => { if (!map[r.date]) map[r.date] = []; map[r.date].push(r); });
+    materialHistory.forEach((r) => { if (!map[r.date]) map[r.date] = []; map[r.date].push(r); });
     return Object.entries(map).sort(([a], [b]) => (a < b ? 1 : -1));
-  }, [weeklyMaterialRecords]);
-
-  const weeklyPayrollRuns = useMemo(
-    () => payrollHistory.filter((r) => dayjs(r.payDate).isSameOrAfter(weekStart, "day")),
-    [payrollHistory]
-  );
-  const weeklySalaryNet   = weeklyPayrollRuns.reduce((s, r) => s + r.netPay, 0);
-  const weeklySalaryGross = weeklyPayrollRuns.reduce((s, r) => s + r.grossPay, 0);
-  const weeklyCombined    = weeklySalaryNet + weeklyMaterialCost;
+  }, [materialHistory]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
 
-      {/* Banner */}
+      {/* ── All-time banner ─────────────────────────────────────────────── */}
       <div style={{ background: "linear-gradient(135deg, #0F172A 0%, #1E293B 100%)", borderRadius: "14px", padding: "24px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "20px" }}>
-        {[
-          { label: "Gross Payroll",   value: `₱${weeklySalaryGross.toLocaleString()}`, color: "#60A5FA" },
-          { label: "Net Payroll",     value: `₱${weeklySalaryNet.toLocaleString()}`,   color: "#34D399" },
-          { label: "Materials Cost",  value: `₱${weeklyMaterialCost.toLocaleString()}`,color: "#FBBF24" },
-          { label: "Combined Weekly", value: `₱${weeklyCombined.toLocaleString()}`,    color: "#F472B6" },
-        ].map((item) => (
-          <div key={item.label}>
-            <div style={{ fontSize: "0.6875rem", fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "6px" }}>{item.label}</div>
-            <div style={{ fontSize: "1.375rem", fontWeight: 700, color: item.color, letterSpacing: "-0.03em" }}>{item.value}</div>
-          </div>
-        ))}
+        <div>
+          <div style={{ fontSize: "0.6875rem", fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "4px" }}>All-time Gross Payroll</div>
+          <div style={{ fontSize: "1.375rem", fontWeight: 700, color: "#60A5FA", letterSpacing: "-0.03em" }}>₱{allTimeGross.toLocaleString()}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: "0.6875rem", fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "4px" }}>All-time Net Payroll</div>
+          <div style={{ fontSize: "1.375rem", fontWeight: 700, color: "#34D399", letterSpacing: "-0.03em" }}>₱{allTimeNet.toLocaleString()}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: "0.6875rem", fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "4px" }}>All-time Materials</div>
+          <div style={{ fontSize: "1.375rem", fontWeight: 700, color: "#FBBF24", letterSpacing: "-0.03em" }}>₱{allTimeMaterial.toLocaleString()}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: "0.6875rem", fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "4px" }}>Total Combined Cost</div>
+          <div style={{ fontSize: "1.375rem", fontWeight: 700, color: "#F472B6", letterSpacing: "-0.03em" }}>₱{allTimeCombined.toLocaleString()}</div>
+        </div>
       </div>
 
-      {/* Payroll accordion */}
+      {/* ── Payroll accordion — ALL records ─────────────────────────────── */}
       <AccordionSection
-        icon={MdAccountBalanceWallet} title="Payroll Summary"
-        subtitle="Weekly salary runs — click a record to see worker breakdown"
+        icon={MdAccountBalanceWallet} title="Payroll History"
+        subtitle={`All ${payrollHistory.length} payroll run${payrollHistory.length !== 1 ? "s" : ""} — click a record to see worker breakdown`}
         iconBg={blueIconBg} iconColor={blueIconCol} accentColor="#2563EB"
-        isEmpty={weeklyPayrollRuns.length === 0} emptyText="No payroll runs this week." darkMode={darkMode}
+        isEmpty={payrollHistory.length === 0} emptyText="No payroll runs yet." darkMode={darkMode}
         stats={[
-          { label: "Runs",       value: weeklyPayrollRuns.length },
-          { label: "Gross",      value: `₱${weeklySalaryGross.toLocaleString()}` },
-          { label: "Net payout", value: `₱${weeklySalaryNet.toLocaleString()}` },
+          { label: "Total runs",  value: payrollHistory.length },
+          { label: "Gross",       value: `₱${allTimeGross.toLocaleString()}` },
+          { label: "Net payout",  value: `₱${allTimeNet.toLocaleString()}` },
         ]}
       >
         <ColHeader darkMode={darkMode} cols={[
-          { label: "Pay Period", width: "1fr"  },
-          { label: "Workers",   width: "70px" },
-          { label: "Gross",     width: "90px" },
-          { label: "Absent",    width: "90px" },
-          { label: "Advance",   width: "90px" },
-          { label: "Net",       width: "100px"},
-          { label: "",          width: "50px" },
+          { label: "Pay Period", width: "1fr"   },
+          { label: "Workers",   width: "70px"  },
+          { label: "Gross",     width: "100px" },
+          { label: "Absent",    width: "100px" },
+          { label: "Advance",   width: "100px" },
+          { label: "Net",       width: "110px" },
+          { label: "",          width: "50px"  },
         ]} />
 
-        {weeklyPayrollRuns.map((record, idx) => (
+        {payrollHistory.map((record, idx) => (
           <ExpandableRow
             key={record.id} accentColor="#2563EB" darkMode={darkMode}
-            isLast={idx === weeklyPayrollRuns.length - 1}
+            isLast={idx === payrollHistory.length - 1}
             summary={
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 70px 90px 90px 90px 100px", gap: "12px", alignItems: "center" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 70px 100px 100px 100px 110px", gap: "12px", alignItems: "center" }}>
                 <div>
                   <div style={{ fontWeight: 700, fontSize: "0.875rem", color: textPrimary }}>
                     {record.periodStart && record.periodEnd
@@ -241,18 +254,18 @@ function Reports() {
                   ))}
                 </div>
                 {getWorkerRowsForRecord(record).map((row, i, arr) => (
-                  <div key={row.id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 100px 90px 90px 100px", borderBottom: i < arr.length - 1 ? `1px solid ${darkMode ? "#334155" : "#E2E8F0"}` : "none", background: i % 2 === 0 ? (darkMode ? "#0F172A" : "#FFFFFF") : (darkMode ? "#111827" : "#F8FAFC") }}>
+                  <div key={row.id || row.worker_id || i} style={{ display: "grid", gridTemplateColumns: "1fr 110px 100px 90px 90px 100px", borderBottom: i < arr.length - 1 ? `1px solid ${darkMode ? "#334155" : "#E2E8F0"}` : "none", background: i % 2 === 0 ? (darkMode ? "#0F172A" : "#FFFFFF") : (darkMode ? "#111827" : "#F8FAFC") }}>
                     <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: "8px" }}>
-                      <div style={{ width: "26px", height: "26px", borderRadius: "50%", background: `hsl(${(row.id * 47) % 360}, 60%, ${darkMode ? "45%" : "50%"})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.6875rem", fontWeight: 700, color: "#fff", flexShrink: 0 }}>
-                        {row.name.charAt(0)}
+                      <div style={{ width: "26px", height: "26px", borderRadius: "50%", background: `hsl(${((row.id || row.worker_id || i) * 47) % 360}, 60%, ${darkMode ? "45%" : "50%"})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.6875rem", fontWeight: 700, color: "#fff", flexShrink: 0 }}>
+                        {(row.name || "?").charAt(0)}
                       </div>
                       <span style={{ fontWeight: 600, fontSize: "0.875rem", color: textPrimary }}>{row.name}</span>
                     </div>
                     <div style={{ padding: "10px 16px", fontSize: "0.875rem", color: textMuted }}>{row.position}</div>
-                    <div style={{ padding: "10px 16px", fontSize: "0.875rem", color: textPrimary }}>₱{row.grossPay.toLocaleString()}</div>
-                    <div style={{ padding: "10px 16px", fontSize: "0.875rem", fontWeight: row.absentDeduction > 0 ? 600 : 400, color: row.absentDeduction > 0 ? (darkMode ? "#F87171" : "#DC2626") : textSub }}>₱{row.absentDeduction.toLocaleString()}</div>
-                    <div style={{ padding: "10px 16px", fontSize: "0.875rem", fontWeight: row.cashAdvance > 0 ? 600 : 400, color: row.cashAdvance > 0 ? (darkMode ? "#FBBF24" : "#D97706") : textSub }}>₱{row.cashAdvance.toLocaleString()}</div>
-                    <div style={{ padding: "10px 16px", fontSize: "0.875rem", fontWeight: 800, color: darkMode ? "#34D399" : "#059669" }}>₱{row.netPay.toLocaleString()}</div>
+                    <div style={{ padding: "10px 16px", fontSize: "0.875rem", color: textPrimary }}>₱{(row.grossPay || 0).toLocaleString()}</div>
+                    <div style={{ padding: "10px 16px", fontSize: "0.875rem", fontWeight: row.absentDeduction > 0 ? 600 : 400, color: row.absentDeduction > 0 ? (darkMode ? "#F87171" : "#DC2626") : textSub }}>₱{(row.absentDeduction || 0).toLocaleString()}</div>
+                    <div style={{ padding: "10px 16px", fontSize: "0.875rem", fontWeight: row.cashAdvance > 0 ? 600 : 400, color: row.cashAdvance > 0 ? (darkMode ? "#FBBF24" : "#D97706") : textSub }}>₱{(row.cashAdvance || 0).toLocaleString()}</div>
+                    <div style={{ padding: "10px 16px", fontSize: "0.875rem", fontWeight: 800, color: darkMode ? "#34D399" : "#059669" }}>₱{(row.netPay || 0).toLocaleString()}</div>
                   </div>
                 ))}
                 <div style={{ padding: "10px 16px", background: detailHeadBlue, borderTop: `1px solid ${detailBorderBlue}`, display: "flex", justifyContent: "flex-end", gap: "24px" }}>
@@ -265,15 +278,15 @@ function Reports() {
         ))}
       </AccordionSection>
 
-      {/* Materials accordion */}
+      {/* ── Materials accordion — ALL records ───────────────────────────── */}
       <AccordionSection
-        icon={MdInventory2} title="Material Usage"
-        subtitle="Weekly inventory records — click a date to see materials"
+        icon={MdInventory2} title="Material Usage History"
+        subtitle={`All ${materialHistory.length} material entr${materialHistory.length !== 1 ? "ies" : "y"} — click a date to expand`}
         iconBg={purpleIconBg} iconColor={purpleIconCol} accentColor="#7C3AED"
-        isEmpty={materialByDate.length === 0} emptyText="No material records this week." darkMode={darkMode}
+        isEmpty={materialByDate.length === 0} emptyText="No material records yet." darkMode={darkMode}
         stats={[
-          { label: "Entries",     value: weeklyMaterialRecords.length },
-          { label: "Total spent", value: `₱${weeklyMaterialCost.toLocaleString()}` },
+          { label: "Entries",     value: materialHistory.length },
+          { label: "Total spent", value: `₱${allTimeMaterial.toLocaleString()}` },
         ]}
       >
         <ColHeader darkMode={darkMode} cols={[
@@ -323,16 +336,16 @@ function Reports() {
         })}
       </AccordionSection>
 
-      {/* Footer summary */}
+      {/* ── Footer summary ───────────────────────────────────────────────── */}
       <div style={{ background: cardBg, border: `1px solid ${cardBorder}`, borderRadius: "12px", padding: "14px 20px", display: "flex", gap: "24px", flexWrap: "wrap", alignItems: "center", boxShadow: darkMode ? "0 1px 4px rgba(0,0,0,0.4)" : "0 1px 3px rgba(0,0,0,0.05)", transition: "background 0.2s" }}>
         <div style={{ fontSize: "0.8125rem", fontWeight: 600, color: textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-          Week of {dayjs(weekStart).format("MMM D")} – {dayjs().format("MMM D, YYYY")}
+          All-time Summary
         </div>
         <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" }}>
           {[
-            { label: "Salary",    value: `₱${weeklySalaryNet.toLocaleString()}`,    color: darkMode ? "#60A5FA" : "#2563EB" },
-            { label: "Materials", value: `₱${weeklyMaterialCost.toLocaleString()}`, color: darkMode ? "#A78BFA" : "#7C3AED" },
-            { label: "Combined",  value: `₱${weeklyCombined.toLocaleString()}`,     color: textPrimary, bold: true },
+            { label: "Net Salary",  value: `₱${allTimeNet.toLocaleString()}`,      color: darkMode ? "#60A5FA" : "#2563EB" },
+            { label: "Materials",   value: `₱${allTimeMaterial.toLocaleString()}`,  color: darkMode ? "#A78BFA" : "#7C3AED" },
+            { label: "Total Cost",  value: `₱${allTimeCombined.toLocaleString()}`,  color: textPrimary, bold: true },
           ].map((item) => (
             <div key={item.label} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
               <span style={{ fontSize: "0.8125rem", color: textSub }}>{item.label}:</span>
@@ -341,6 +354,7 @@ function Reports() {
           ))}
         </div>
       </div>
+
     </div>
   );
 }
