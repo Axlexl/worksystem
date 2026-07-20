@@ -148,7 +148,8 @@ function Reports() {
   const absentInRange = (workerId, dates) =>
     dates.reduce((count, date) => {
       const status = attendanceRecords[date.format("YYYY-MM-DD")]?.[workerId];
-      return count + (status === "Present" || status === "Late" || status === "Leave" ? 0 : 1);
+      // Only count as absent when EXPLICITLY marked Absent — unrecorded days are NOT deducted
+      return count + (status === "Absent" ? 1 : 0);
     }, 0);
   const recordedInRange = (workerId, dates) =>
     dates.reduce((count, date) => count + (attendanceRecords[date.format("YYYY-MM-DD")]?.[workerId] ? 1 : 0), 0);

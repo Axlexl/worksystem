@@ -96,7 +96,8 @@ function Payroll() {
   const absentInRange = (workerId, dates) =>
     dates.reduce((count, date) => {
       const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[workerId];
-      return count + (s === "Present" || s === "Late" || s === "Leave" ? 0 : 1);
+      // Only count as absent when EXPLICITLY marked Absent — unrecorded days are NOT deducted
+      return count + (s === "Absent" ? 1 : 0);
     }, 0);
 
   const recordedInRange = (workerId, dates) =>
@@ -333,7 +334,7 @@ function Payroll() {
             </div>
 
             <ul style={{ margin: 0, paddingLeft: "18px", listStyle: "disc", display: "flex", flexDirection: "column", gap: "4px" }}>
-              {["Absent days are deducted from salary; Late and Leave are not.", "Unmarked days do not count as absent unless explicitly marked.", "Cash advances are deducted from net pay every Saturday."].map((tip, i) => (
+              {["Only days explicitly marked Absent are deducted from salary.", "Present, Late, and Leave do not cause any deduction.", "Unrecorded days are not counted as absent."].map((tip, i) => (
                 <li key={i} style={{ fontSize: "0.8125rem", color: textMuted }}>{tip}</li>
               ))}
             </ul>
