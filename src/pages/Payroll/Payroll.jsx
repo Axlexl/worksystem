@@ -115,7 +115,8 @@ function Payroll() {
       const grossPay        = worker.dailyRate * 6;
       const absentDays      = dates.reduce((count, date) => {
         const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
-        return count + (s === "Absent" ? 1 : 0);
+        // Absent AND Leave both deduct pay
+        return count + (s === "Absent" || s === "Leave" ? 1 : 0);
       }, 0);
       const daysRecorded    = dates.reduce((count, date) => {
         return count + (attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id] ? 1 : 0);
@@ -274,7 +275,7 @@ function Payroll() {
       const grossPay = worker.dailyRate * 6;
       const absentDays = dates.reduce((count, date) => {
         const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
-        return count + (s === "Absent" ? 1 : 0);
+        return count + (s === "Absent" || s === "Leave" ? 1 : 0);
       }, 0);
       const daysRecorded = dates.reduce((count, date) => {
         return count + (attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id] ? 1 : 0);
@@ -354,7 +355,7 @@ function Payroll() {
             </div>
 
             <ul style={{ margin: 0, paddingLeft: "18px", listStyle: "disc", display: "flex", flexDirection: "column", gap: "4px" }}>
-              {["Only days explicitly marked Absent are deducted from salary.", "Present, Late, and Leave do not cause any deduction.", "Unrecorded days are not counted as absent."].map((tip, i) => (
+              {["Absent and Leave days are both deducted from salary.", "Present does not cause any deduction.", "Unrecorded days are not counted as absent."].map((tip, i) => (
                 <li key={i} style={{ fontSize: "0.8125rem", color: textMuted }}>{tip}</li>
               ))}
             </ul>
@@ -397,9 +398,8 @@ function Payroll() {
             // Status colors per day
             const STATUS_COLOR = {
               Present: { bg: darkMode ? "rgba(5,150,105,0.2)"  : "#DCFCE7", text: darkMode ? "#34D399" : "#15803D" },
-              Late:    { bg: darkMode ? "rgba(217,119,6,0.2)"  : "#FEF3C7", text: darkMode ? "#FBBF24" : "#B45309" },
-              Leave:   { bg: darkMode ? "rgba(100,116,139,0.2)": "#F1F5F9", text: darkMode ? "#94A3B8" : "#475569" },
               Absent:  { bg: darkMode ? "rgba(220,38,38,0.2)"  : "#FEE2E2", text: darkMode ? "#F87171" : "#B91C1C" },
+              Leave:   { bg: darkMode ? "rgba(220,38,38,0.2)"  : "#FEE2E2", text: darkMode ? "#F87171" : "#B91C1C" },
               "":      { bg: darkMode ? "#1E293B"               : "#F8FAFC", text: darkMode ? "#334155" : "#CBD5E1" },
             };
 
@@ -826,7 +826,7 @@ function Payroll() {
                       },
                     }}
                   >
-                    {["Present", "Absent", "Late", "Leave"].map((opt) => (
+                    {["Present", "Absent", "Leave"].map((opt) => (
                       <ToggleButton key={opt} value={opt}>{opt}</ToggleButton>
                     ))}
                   </ToggleButtonGroup>

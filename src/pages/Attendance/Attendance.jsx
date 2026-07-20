@@ -18,33 +18,29 @@ import {
 import {
   MdCheckCircle,
   MdCancel,
-  MdSchedule,
   MdEventNote,
   MdCalendarToday,
 } from "react-icons/md";
 import { useThemeMode } from "../../context/ThemeContext";
 import { dbSetAttendance, dbSetManyAttendance } from "../../services/db.service";
 
-const STATUS_OPTIONS = ["Present", "Absent", "Late", "Leave"];
+const STATUS_OPTIONS = ["Present", "Absent", "Leave"];
 
 const STATUS_STYLES = {
   Present: { bg: "#DCFCE7", color: "#15803D", chip: "success" },
   Absent:  { bg: "#FEE2E2", color: "#B91C1C", chip: "error" },
-  Late:    { bg: "#FEF3C7", color: "#B45309", chip: "warning" },
-  Leave:   { bg: "#F1F5F9", color: "#475569", chip: "default" },
+  Leave:   { bg: "#FEE2E2", color: "#B91C1C", chip: "error" },
 };
 
 const STATUS_STYLES_DARK = {
   Present: { bg: "rgba(5,150,105,0.15)",   color: "#34D399", chip: "success" },
   Absent:  { bg: "rgba(220,38,38,0.15)",   color: "#F87171", chip: "error" },
-  Late:    { bg: "rgba(217,119,6,0.15)",   color: "#FBBF24", chip: "warning" },
-  Leave:   { bg: "rgba(100,116,139,0.12)", color: "#94A3B8", chip: "default" },
+  Leave:   { bg: "rgba(220,38,38,0.15)",   color: "#F87171", chip: "error" },
 };
 
 const STATUS_ICONS = {
   Present: MdCheckCircle,
   Absent:  MdCancel,
-  Late:    MdSchedule,
   Leave:   MdEventNote,
 };
 

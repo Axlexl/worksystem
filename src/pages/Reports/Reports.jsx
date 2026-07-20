@@ -165,7 +165,7 @@ function Reports() {
       const grossPay = worker.dailyRate * 6;
       const absentDays = dates.reduce((count, date) => {
         const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
-        return count + (s === "Absent" ? 1 : 0);
+        return count + (s === "Absent" || s === "Leave" ? 1 : 0);
       }, 0);
       const daysRecorded = dates.reduce((count, date) => {
         return count + (attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id] ? 1 : 0);
