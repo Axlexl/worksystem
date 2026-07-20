@@ -105,14 +105,26 @@ function Payroll() {
       return count + (attendanceRecords[date.format("YYYY-MM-DD")]?.[workerId] ? 1 : 0);
     }, 0);
 
-  const payrollRows = useMemo(() =>
-    workers.map((worker) => {
-      const grossPay = worker.dailyRate * 6;
-      const absentDays = absentInRange(worker.id, periodDates);
+  const payrollRows = useMemo(() => {
+    // Recompute period dates inside memo so weekOffset changes are captured
+    const sat   = getSaturday(dayjs()).add(weekOffset * 7, "day");
+    const start = sat.subtract(5, "day");
+    const dates = Array.from({ length: 6 }, (_, i) => start.add(i, "day"));
+
+    return workers.map((worker) => {
+      const grossPay        = worker.dailyRate * 6;
+      const absentDays      = dates.reduce((count, date) => {
+        const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        return count + (s === "Absent" ? 1 : 0);
+      }, 0);
+      const daysRecorded    = dates.reduce((count, date) => {
+        return count + (attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id] ? 1 : 0);
+      }, 0);
       const absentDeduction = absentDays * worker.dailyRate;
-      const netPay = Math.max(grossPay - absentDeduction - worker.cashAdvance, 0);
-      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded: recordedInRange(worker.id, periodDates) };
-    }), [workers, attendanceRecords]);
+      const netPay          = Math.max(grossPay - absentDeduction - worker.cashAdvance, 0);
+      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded };
+    });
+  }, [workers, attendanceRecords, weekOffset]);
 
   const totalGross   = payrollRows.reduce((s, r) => s + r.grossPay, 0);
   const totalAdvance = payrollRows.reduce((s, r) => s + r.cashAdvance, 0);
@@ -254,14 +266,22 @@ function Payroll() {
   const getWorkerRowsForRecord = useCallback((record) => {
     const cached = recordRows[record.id];
     if (cached && cached.length > 0) return cached;
-    // Fallback: live recalculate (for old records saved before this fix)
-    const dates = getWeekRange(record.payDate);
+    // Fallback live recalc for old records without snapshots
+    const end   = dayjs(record.payDate);
+    const start = end.subtract(5, "day");
+    const dates = Array.from({ length: 6 }, (_, i) => start.add(i, "day"));
     return workers.map((worker) => {
-      const grossPay        = worker.dailyRate * 6;
-      const absentDays      = absentInRange(worker.id, dates);
+      const grossPay = worker.dailyRate * 6;
+      const absentDays = dates.reduce((count, date) => {
+        const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        return count + (s === "Absent" ? 1 : 0);
+      }, 0);
+      const daysRecorded = dates.reduce((count, date) => {
+        return count + (attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id] ? 1 : 0);
+      }, 0);
       const absentDeduction = absentDays * worker.dailyRate;
-      const netPay          = Math.max(grossPay - absentDeduction - worker.cashAdvance, 0);
-      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded: recordedInRange(worker.id, dates) };
+      const netPay = Math.max(grossPay - absentDeduction - worker.cashAdvance, 0);
+      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded };
     });
   }, [recordRows, workers, attendanceRecords]);
 

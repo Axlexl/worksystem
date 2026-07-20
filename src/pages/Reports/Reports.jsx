@@ -158,13 +158,21 @@ function Reports() {
     const cached = rowCache[record.id];
     if (cached && cached.length > 0) return cached;
     // Fallback live recalc for old records
-    const dates = getWeekRange(record.payDate);
+    const end   = dayjs(record.payDate);
+    const start = end.subtract(5, "day");
+    const dates = Array.from({ length: 6 }, (_, i) => start.add(i, "day"));
     return workers.map((worker) => {
-      const grossPay        = worker.dailyRate * 6;
-      const absentDays      = absentInRange(worker.id, dates);
+      const grossPay = worker.dailyRate * 6;
+      const absentDays = dates.reduce((count, date) => {
+        const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        return count + (s === "Absent" ? 1 : 0);
+      }, 0);
+      const daysRecorded = dates.reduce((count, date) => {
+        return count + (attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id] ? 1 : 0);
+      }, 0);
       const absentDeduction = absentDays * worker.dailyRate;
-      const netPay          = Math.max(grossPay - absentDeduction - worker.cashAdvance, 0);
-      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded: recordedInRange(worker.id, dates) };
+      const netPay = Math.max(grossPay - absentDeduction - worker.cashAdvance, 0);
+      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded };
     });
   };
 
