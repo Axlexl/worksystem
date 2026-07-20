@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Alert, Button, Divider, Switch, TextField } from "@mui/material";
+import { Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Switch, TextField } from "@mui/material";
 import {
   MdBusiness, MdTune, MdCheckCircle, MdStorage, MdSecurity,
   MdAccessTime, MdLogout, MdBackup, MdRestore, MdFolderOpen,
@@ -92,6 +92,9 @@ function PwField({ label, value, onChange, name, darkMode }) {
 function Settings() {
   const { darkMode } = useThemeMode();
   const { user, login, logout } = useAuth();
+
+  // ── Logout confirm ────────────────────────────────────────────────────────
+  const [confirmLogout, setConfirmLogout] = useState(false);
 
   // ── Company / preferences state ───────────────────────────────────────────
   const [settings, setSettings] = useState({
@@ -524,13 +527,46 @@ function Settings() {
 
       {/* ── Footer actions ─────────────────────────────────────────────────── */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <Button variant="outlined" color="error" startIcon={<MdLogout size={16} />} onClick={logout}>
+        <Button variant="outlined" color="error" startIcon={<MdLogout size={16} />} onClick={() => setConfirmLogout(true)}>
           Sign Out
         </Button>
         <Button variant="contained" size="large" onClick={handleSave} sx={{ px: 4 }}>
           Save Settings
         </Button>
       </div>
+
+      {/* ── Logout confirm dialog ─────────────────────────────────────────── */}
+      <Dialog open={confirmLogout} onClose={() => setConfirmLogout(false)} maxWidth="xs" fullWidth
+        PaperProps={{ style: { background: darkMode ? "#1E293B" : "#FFFFFF", border: `1px solid ${darkMode ? "#334155" : "#E2E8F0"}` } }}>
+        <DialogTitle sx={{ color: darkMode ? "#F1F5F9" : "#0F172A", background: darkMode ? "#1E293B" : "#FFFFFF" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div style={{ width: "38px", height: "38px", borderRadius: "10px", background: darkMode ? "rgba(220,38,38,0.15)" : "#FEE2E2", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <MdLogout size={18} color={darkMode ? "#F87171" : "#DC2626"} />
+            </div>
+            <span style={{ fontWeight: 700 }}>Sign Out</span>
+          </div>
+        </DialogTitle>
+        <Divider sx={{ borderColor: darkMode ? "#334155" : "#E2E8F0" }} />
+        <DialogContent sx={{ background: darkMode ? "#1E293B" : "#FFFFFF", pt: "16px !important" }}>
+          <div style={{ fontSize: "0.9375rem", color: darkMode ? "#CBD5E1" : "#374151", lineHeight: 1.6 }}>
+            Are you sure you want to sign out?
+          </div>
+          <div style={{ fontSize: "0.8125rem", color: darkMode ? "#64748B" : "#94A3B8", marginTop: "6px" }}>
+            You will need to sign in again to access WorkSystem.
+          </div>
+        </DialogContent>
+        <Divider sx={{ borderColor: darkMode ? "#334155" : "#E2E8F0" }} />
+        <DialogActions sx={{ background: darkMode ? "#1E293B" : "#FFFFFF", px: 3, py: 2, gap: 1 }}>
+          <Button onClick={() => setConfirmLogout(false)} variant="outlined">Cancel</Button>
+          <Button
+            variant="contained" color="error"
+            startIcon={<MdLogout size={15} />}
+            onClick={() => { setConfirmLogout(false); logout(); }}
+          >
+            Yes, Sign Out
+          </Button>
+        </DialogActions>
+      </Dialog>
 
     </div>
   );

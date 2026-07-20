@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { validateSession } from "../services/auth.service";
 
 const AuthContext = createContext(null);
@@ -20,31 +20,41 @@ function loadSession() {
 }
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(loadSession);
+  const [user,       setUser]       = useState(loadSession);
+  // "idle" | "logging-in" | "logging-out"
+  const [transition, setTransition] = useState("idle");
 
-  const login = (userData) => {
-    setUser(userData);
-    localStorage.setItem(SESSION_KEY, JSON.stringify(userData));
-  };
+  // ── Login with loading animation ──────────────────────────────────────────
+  const login = useCallback((userData) => {
+    setTransition("logging-in");
+    setTimeout(() => {
+      setUser(userData);
+      localStorage.setItem(SESSION_KEY, JSON.stringify(userData));
+      setTransition("idle");
+    }, 1200);
+  }, []);
 
-  const logout = () => {
-    setUser(null);
-    localStorage.removeItem(SESSION_KEY);
-  };
+  // ── Logout with loading animation ─────────────────────────────────────────
+  const logout = useCallback(() => {
+    setTransition("logging-out");
+    setTimeout(() => {
+      setUser(null);
+      localStorage.removeItem(SESSION_KEY);
+      setTransition("idle");
+    }, 1000);
+  }, []);
 
   // ── Auto-logout when Electron window closes ───────────────────────────────
   useEffect(() => {
     const isElectron = typeof window !== "undefined" && Boolean(window?.api?.onAppClose);
     if (!isElectron) return;
-
     window.api.onAppClose(() => {
-      // Clear session so next launch requires login
       localStorage.removeItem(SESSION_KEY);
     });
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
+    <AuthContext.Provider value={{ user, transition, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
