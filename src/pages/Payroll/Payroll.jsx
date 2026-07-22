@@ -112,18 +112,23 @@ function Payroll() {
     const dates = Array.from({ length: 6 }, (_, i) => start.add(i, "day"));
 
     return workers.map((worker) => {
-      const grossPay        = worker.dailyRate * 6;
-      const absentDays      = dates.reduce((count, date) => {
+      // Only days marked Present count toward pay
+      const presentDays  = dates.reduce((count, date) => {
         const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
-        // Absent AND Leave both deduct pay
+        return count + (s === "Present" ? 1 : 0);
+      }, 0);
+      // Absent/Leave shown for info — already excluded from gross
+      const absentDays   = dates.reduce((count, date) => {
+        const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
         return count + (s === "Absent" || s === "Leave" ? 1 : 0);
       }, 0);
-      const daysRecorded    = dates.reduce((count, date) => {
+      const daysRecorded = dates.reduce((count, date) => {
         return count + (attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id] ? 1 : 0);
       }, 0);
-      const absentDeduction = absentDays * worker.dailyRate;
-      const netPay          = Math.max(grossPay - absentDeduction - worker.cashAdvance, 0);
-      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded };
+      const grossPay        = worker.dailyRate * presentDays;
+      const absentDeduction = 0; // gross already excludes non-present days — no double deduction
+      const netPay          = Math.max(grossPay - worker.cashAdvance, 0);
+      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded, presentDays };
     });
   }, [workers, attendanceRecords, weekOffset]);
 
@@ -272,7 +277,10 @@ function Payroll() {
     const start = end.subtract(5, "day");
     const dates = Array.from({ length: 6 }, (_, i) => start.add(i, "day"));
     return workers.map((worker) => {
-      const grossPay = worker.dailyRate * 6;
+      const presentDays = dates.reduce((count, date) => {
+        const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        return count + (s === "Present" ? 1 : 0);
+      }, 0);
       const absentDays = dates.reduce((count, date) => {
         const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
         return count + (s === "Absent" || s === "Leave" ? 1 : 0);
@@ -280,9 +288,10 @@ function Payroll() {
       const daysRecorded = dates.reduce((count, date) => {
         return count + (attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id] ? 1 : 0);
       }, 0);
-      const absentDeduction = absentDays * worker.dailyRate;
-      const netPay = Math.max(grossPay - absentDeduction - worker.cashAdvance, 0);
-      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded };
+      const grossPay        = worker.dailyRate * presentDays;
+      const absentDeduction = 0;
+      const netPay          = Math.max(grossPay - worker.cashAdvance, 0);
+      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded, presentDays };
     });
   }, [recordRows, workers, attendanceRecords]);
 
@@ -355,7 +364,7 @@ function Payroll() {
             </div>
 
             <ul style={{ margin: 0, paddingLeft: "18px", listStyle: "disc", display: "flex", flexDirection: "column", gap: "4px" }}>
-              {["Absent and Leave days are both deducted from salary.", "Present does not cause any deduction.", "Unrecorded days are not counted as absent."].map((tip, i) => (
+              {["Gross = daily rate × present days only.", "Absent and Leave days are not paid.", "Cash advances are deducted from net pay."].map((tip, i) => (
                 <li key={i} style={{ fontSize: "0.8125rem", color: textMuted }}>{tip}</li>
               ))}
             </ul>

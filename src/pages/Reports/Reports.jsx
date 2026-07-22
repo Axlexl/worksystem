@@ -162,7 +162,10 @@ function Reports() {
     const start = end.subtract(5, "day");
     const dates = Array.from({ length: 6 }, (_, i) => start.add(i, "day"));
     return workers.map((worker) => {
-      const grossPay = worker.dailyRate * 6;
+      const presentDays = dates.reduce((count, date) => {
+        const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        return count + (s === "Present" ? 1 : 0);
+      }, 0);
       const absentDays = dates.reduce((count, date) => {
         const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
         return count + (s === "Absent" || s === "Leave" ? 1 : 0);
@@ -170,9 +173,10 @@ function Reports() {
       const daysRecorded = dates.reduce((count, date) => {
         return count + (attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id] ? 1 : 0);
       }, 0);
-      const absentDeduction = absentDays * worker.dailyRate;
-      const netPay = Math.max(grossPay - absentDeduction - worker.cashAdvance, 0);
-      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded };
+      const grossPay        = worker.dailyRate * presentDays;
+      const absentDeduction = 0;
+      const netPay          = Math.max(grossPay - worker.cashAdvance, 0);
+      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded, presentDays };
     });
   };
 
