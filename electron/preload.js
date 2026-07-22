@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld("api", {
   // ── Materials ────────────────────────────────────────────────────────────────
   getMaterials:          (a) => ipcRenderer.invoke("materials:getAll", a),
   addMaterial:           (a) => ipcRenderer.invoke("materials:add", a),
+  updateMaterial:        (a) => ipcRenderer.invoke("materials:update", a),
   deleteMaterial:        (a) => ipcRenderer.invoke("materials:delete", a),
   resetWeeklyMaterials:  (a) => ipcRenderer.invoke("materials:resetWeekly", a),
 

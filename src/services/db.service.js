@@ -144,6 +144,14 @@ export async function dbAddMaterial(userId, material) {
   return created;
 }
 
+export async function dbUpdateMaterial(userId, material) {
+  if (isElectron) return window.api.updateMaterial({ material });
+  const all = lsGet(lsKey(userId, "materials"), []);
+  const updated = all.map((m) => m.id === material.id ? { ...m, ...material } : m);
+  lsSet(lsKey(userId, "materials"), updated);
+  return material;
+}
+
 export async function dbDeleteMaterial(userId, materialId) {
   if (isElectron) return window.api.deleteMaterial({ materialId });
   const all = lsGet(lsKey(userId, "materials"), []);

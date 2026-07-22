@@ -446,6 +446,13 @@ ipcMain.handle("materials:add", (_, { userId, material }) => {
   return db.prepare("SELECT * FROM materials WHERE id = ?").get(info.lastInsertRowid);
 });
 
+ipcMain.handle("materials:update", (_, { material }) => {
+  db.prepare(`
+    UPDATE materials SET name=?, quantity=?, unit=?, unitCost=?, status=? WHERE id=?
+  `).run(material.name, material.quantity, material.unit || "pcs", material.unitCost, material.status || "In Stock", material.id);
+  return db.prepare("SELECT * FROM materials WHERE id = ?").get(material.id);
+});
+
 ipcMain.handle("materials:delete", (_, { materialId }) => {
   db.prepare("DELETE FROM materials WHERE id = ?").run(materialId);
   return { ok: true };
