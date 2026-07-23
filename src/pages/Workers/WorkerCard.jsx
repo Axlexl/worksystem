@@ -1,7 +1,7 @@
-import { MdEdit, MdDelete, MdVisibility } from "react-icons/md";
+import { MdEdit, MdDelete, MdVisibility, MdPersonAdd, MdPersonOff } from "react-icons/md";
 import { useThemeMode } from "../../context/ThemeContext";
 
-function WorkerCard({ worker, onView, onEdit, onDelete }) {
+function WorkerCard({ worker, onView, onEdit, onDelete, onToggleStatus }) {
   const { darkMode } = useThemeMode();
 
   const cardBg      = darkMode ? "#1E293B" : "#FFFFFF";
@@ -83,20 +83,16 @@ function WorkerCard({ worker, onView, onEdit, onDelete }) {
           {initials}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              fontWeight: 700,
-              fontSize: "0.9375rem",
-              color: textPrimary,
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-          >
+          <div style={{ fontWeight: 700, fontSize: "0.9375rem", color: textPrimary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {worker.name}
           </div>
-          <div style={{ fontSize: "0.8125rem", color: textMuted, marginTop: "2px" }}>
+          <div style={{ fontSize: "0.8125rem", color: textMuted, marginTop: "2px", display: "flex", alignItems: "center", gap: "6px" }}>
             {worker.position}
+            {worker.status === "Inactive" && (
+              <span style={{ fontSize: "0.6875rem", fontWeight: 700, padding: "1px 6px", borderRadius: "4px", background: darkMode ? "rgba(220,38,38,0.15)" : "#FEE2E2", color: darkMode ? "#F87171" : "#DC2626" }}>
+                INACTIVE
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -122,74 +118,31 @@ function WorkerCard({ worker, onView, onEdit, onDelete }) {
       </div>
 
       {/* Actions */}
-      <div style={{ display: "flex", gap: "8px", borderTop: `1px solid ${dividerColor}`, paddingTop: "14px" }}>
-        <button
-          onClick={() => onView?.(worker)}
-          style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "5px",
-            padding: "8px",
-            borderRadius: "8px",
-            border: "none",
-            background: viewBg,
-            color: viewColor,
-            fontSize: "0.8125rem",
-            fontWeight: 600,
-            cursor: "pointer",
-            transition: "background 0.15s",
-          }}
+      <div style={{ display: "flex", gap: "8px", borderTop: `1px solid ${dividerColor}`, paddingTop: "14px", flexWrap: "wrap" }}>
+        <button onClick={() => onView?.(worker)}
+          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "5px", padding: "8px", borderRadius: "8px", border: "none", background: viewBg, color: viewColor, fontSize: "0.8125rem", fontWeight: 600, cursor: "pointer", transition: "background 0.15s" }}
           onMouseEnter={(e) => (e.currentTarget.style.background = viewBgHov)}
-          onMouseLeave={(e) => (e.currentTarget.style.background = viewBg)}
-        >
+          onMouseLeave={(e) => (e.currentTarget.style.background = viewBg)}>
           <MdVisibility size={15} /> View
         </button>
-        <button
-          onClick={() => onEdit?.(worker)}
-          style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "5px",
-            padding: "8px",
-            borderRadius: "8px",
-            border: "none",
-            background: editBg,
-            color: editColor,
-            fontSize: "0.8125rem",
-            fontWeight: 600,
-            cursor: "pointer",
-            transition: "background 0.15s",
-          }}
+        <button onClick={() => onEdit?.(worker)}
+          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "5px", padding: "8px", borderRadius: "8px", border: "none", background: editBg, color: editColor, fontSize: "0.8125rem", fontWeight: 600, cursor: "pointer", transition: "background 0.15s" }}
           onMouseEnter={(e) => (e.currentTarget.style.background = editBgHov)}
-          onMouseLeave={(e) => (e.currentTarget.style.background = editBg)}
-        >
+          onMouseLeave={(e) => (e.currentTarget.style.background = editBg)}>
           <MdEdit size={15} /> Edit
         </button>
-        <button
-          onClick={() => onDelete?.(worker)}
-          style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "5px",
-            padding: "8px",
-            borderRadius: "8px",
-            border: "none",
-            background: delBg,
-            color: delColor,
-            fontSize: "0.8125rem",
-            fontWeight: 600,
-            cursor: "pointer",
-            transition: "background 0.15s",
-          }}
+        {/* Fire / Rehire toggle */}
+        <button onClick={() => onToggleStatus?.(worker)}
+          title={worker.status === "Inactive" ? "Rehire worker" : "Mark as done / fire"}
+          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "5px", padding: "8px", borderRadius: "8px", border: "none", background: worker.status === "Inactive" ? (darkMode ? "rgba(5,150,105,0.15)" : "#DCFCE7") : (darkMode ? "rgba(220,38,38,0.15)" : "#FFF1F2"), color: worker.status === "Inactive" ? (darkMode ? "#34D399" : "#15803D") : (darkMode ? "#F87171" : "#DC2626"), fontSize: "0.8125rem", fontWeight: 600, cursor: "pointer", transition: "background 0.15s" }}>
+          {worker.status === "Inactive"
+            ? <><MdPersonAdd size={15} /> Rehire</>
+            : <><MdPersonOff size={15} /> Fire</>}
+        </button>
+        <button onClick={() => onDelete?.(worker)}
+          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "5px", padding: "8px", borderRadius: "8px", border: "none", background: delBg, color: delColor, fontSize: "0.8125rem", fontWeight: 600, cursor: "pointer", transition: "background 0.15s" }}
           onMouseEnter={(e) => (e.currentTarget.style.background = delBgHov)}
-          onMouseLeave={(e) => (e.currentTarget.style.background = delBg)}
-        >
+          onMouseLeave={(e) => (e.currentTarget.style.background = delBg)}>
           <MdDelete size={15} /> Delete
         </button>
       </div>

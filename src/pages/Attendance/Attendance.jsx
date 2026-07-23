@@ -49,7 +49,9 @@ function Attendance() {
   const statusStyles = darkMode ? STATUS_STYLES_DARK : STATUS_STYLES;
 
   const selectedRecords = attendanceRecords[selectedDate] || {};
-  const attendanceList = workers.map((w) => {
+  // Only show Active workers in attendance — Inactive (fired/done) are hidden
+  const activeWorkers  = workers.filter((w) => w.status !== "Inactive");
+  const attendanceList = activeWorkers.map((w) => {
     const rec = parseRecord(selectedRecords[w.id]);
     return { ...w, status: rec.status || "Absent", hours: rec.hours ?? 8 };
   });
@@ -81,14 +83,13 @@ function Attendance() {
   };
 
   const markAllPresent = async () => {
-    const records = workers.reduce((acc, w) => ({ ...acc, [w.id]: { status: "Present", hours: 8 } }), {});
+    const records = activeWorkers.reduce((acc, w) => ({ ...acc, [w.id]: { status: "Present", hours: 8 } }), {});
     await dbSetManyAttendance(userId, selectedDate, records);
     setAttendanceRecords((p) => ({ ...p, [selectedDate]: records }));
   };
 
   const clearAll = async () => {
-    // Mark everyone Absent (removes them from pay — same as no record but explicit)
-    const records = workers.reduce((acc, w) => ({ ...acc, [w.id]: { status: "Absent", hours: 0 } }), {});
+    const records = activeWorkers.reduce((acc, w) => ({ ...acc, [w.id]: { status: "Absent", hours: 0 } }), {});
     await dbSetManyAttendance(userId, selectedDate, records);
     setAttendanceRecords((p) => ({ ...p, [selectedDate]: records }));
   };

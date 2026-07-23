@@ -622,17 +622,35 @@ function Payroll() {
                               </div>
                             </td>
                             <td style={{ padding: "10px 16px", fontSize: "0.875rem", color: textMuted }}>{row.position}</td>
-                            <td style={{ padding: "10px 16px", fontSize: "0.875rem", color: textPrimary }}>₱{row.dailyRate.toLocaleString()}</td>
-                            <td style={{ padding: "10px 16px", fontSize: "0.875rem", color: textPrimary }}>₱{row.grossPay.toLocaleString()}</td>
-                            <td style={{ padding: "10px 16px", fontSize: "0.875rem", color: textMuted }}>{row.daysRecorded}/6</td>
-                            <td style={{ padding: "10px 16px" }}><span style={{ display: "inline-flex", padding: "2px 8px", borderRadius: "5px", fontSize: "0.75rem", fontWeight: 700, background: row.absentDays > 0 ? (darkMode ? "rgba(220,38,38,0.15)" : "#FEE2E2") : (darkMode ? "rgba(5,150,105,0.15)" : "#DCFCE7"), color: row.absentDays > 0 ? (darkMode ? "#F87171" : "#B91C1C") : (darkMode ? "#34D399" : "#15803D") }}>{row.absentDays}</span></td>
-                            <td style={{ padding: "10px 16px", fontSize: "0.875rem", color: row.absentDeduction > 0 ? (darkMode ? "#F87171" : "#DC2626") : textSub, fontWeight: row.absentDeduction > 0 ? 600 : 400 }}>₱{row.absentDeduction.toLocaleString()}</td>
-                            <td style={{ padding: "10px 16px", fontSize: "0.875rem", color: row.cashAdvance > 0 ? (darkMode ? "#FBBF24" : "#D97706") : textSub, fontWeight: row.cashAdvance > 0 ? 600 : 400 }}>₱{row.cashAdvance.toLocaleString()}</td>
-                            <td style={{ padding: "10px 16px", fontSize: "0.9375rem", fontWeight: 800, color: darkMode ? "#34D399" : "#059669" }}>₱{row.netPay.toLocaleString()}</td>
+                            <td style={{ padding: "10px 16px", fontSize: "0.875rem", color: textPrimary }}>₱{(row.dailyRate||0).toLocaleString()}</td>
+                            <td style={{ padding: "10px 16px", fontSize: "0.875rem", color: textPrimary }}>₱{(row.grossPay||0).toLocaleString()}</td>
+                            <td style={{ padding: "10px 16px", fontSize: "0.875rem", color: textMuted }}>{row.daysRecorded || row.presentDays || 0}/6</td>
+                            <td style={{ padding: "10px 16px" }}><span style={{ display: "inline-flex", padding: "2px 8px", borderRadius: "5px", fontSize: "0.75rem", fontWeight: 700, background: (row.absentDays||0) > 0 ? (darkMode ? "rgba(220,38,38,0.15)" : "#FEE2E2") : (darkMode ? "rgba(5,150,105,0.15)" : "#DCFCE7"), color: (row.absentDays||0) > 0 ? (darkMode ? "#F87171" : "#B91C1C") : (darkMode ? "#34D399" : "#15803D") }}>{row.absentDays||0}</span></td>
+                            <td style={{ padding: "10px 16px", fontSize: "0.875rem", color: textSub }}>₱0</td>
+                            <td style={{ padding: "10px 16px", fontSize: "0.875rem", fontWeight: (row.cashAdvance||0) > 0 ? 600 : 400, color: (row.cashAdvance||0) > 0 ? (darkMode ? "#FBBF24" : "#D97706") : textSub }}>₱{(row.cashAdvance||0).toLocaleString()}</td>
+                            <td style={{ padding: "10px 16px", fontSize: "0.9375rem", fontWeight: 800, color: darkMode ? "#34D399" : "#059669" }}>₱{(row.netPay||0).toLocaleString()}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
+
+                    {/* Cash advance summary — who had advances this payroll */}
+                    {workerRows.some((r) => (r.cashAdvance || 0) > 0) && (
+                      <div style={{ padding: "12px 16px", background: darkMode ? "rgba(217,119,6,0.08)" : "#FFFBEB", borderTop: `1px solid ${darkMode ? "rgba(217,119,6,0.2)" : "#FEF3C7"}` }}>
+                        <div style={{ fontSize: "0.6875rem", fontWeight: 700, color: darkMode ? "#FBBF24" : "#D97706", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "8px" }}>
+                          Cash Advances Deducted This Payroll
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                          {workerRows.filter((r) => (r.cashAdvance || 0) > 0).map((r) => (
+                            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "4px 10px", borderRadius: "7px", background: darkMode ? "rgba(217,119,6,0.15)" : "#FEF3C7", border: `1px solid ${darkMode ? "rgba(217,119,6,0.3)" : "#FDE68A"}` }}>
+                              <div style={{ width: "20px", height: "20px", borderRadius: "50%", background: `hsl(${(r.id * 47) % 360}, 60%, ${darkMode ? "45%" : "50%"})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.625rem", fontWeight: 700, color: "#fff" }}>{(r.name||"?").charAt(0)}</div>
+                              <span style={{ fontSize: "0.8125rem", fontWeight: 600, color: darkMode ? "#F1F5F9" : "#0F172A" }}>{r.name}</span>
+                              <span style={{ fontSize: "0.8125rem", color: darkMode ? "#FBBF24" : "#D97706", fontWeight: 700 }}>₱{(r.cashAdvance||0).toLocaleString()}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

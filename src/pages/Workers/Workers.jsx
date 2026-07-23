@@ -145,6 +145,14 @@ function Workers() {
     setEditWorker(null);
   };
 
+  // Toggle Active ↔ Inactive (Hired ↔ Fired)
+  const handleToggleStatus = async (worker) => {
+    const newStatus = worker.status === "Inactive" ? "Active" : "Inactive";
+    const updated   = { ...worker, status: newStatus };
+    await dbUpdateWorker(userId, updated);
+    setWorkers((prev) => prev.map((w) => w.id === updated.id ? updated : w));
+  };
+
   const totalPayroll = workers.reduce((sum, w) => sum + w.dailyRate * 5, 0);
 
   return (
@@ -175,7 +183,7 @@ function Workers() {
       </div>
 
       {/* List */}
-      <WorkerList workers={workers} onView={setViewWorker} onEdit={setEditWorker} onDelete={(worker) => setConfirmDeleteWorker(worker)} />
+      <WorkerList workers={workers} onView={setViewWorker} onEdit={setEditWorker} onDelete={(worker) => setConfirmDeleteWorker(worker)} onToggleStatus={handleToggleStatus} />
 
       {/* Add dialog */}
       <AddWorkerDialog open={open} onClose={() => setOpen(false)} onSave={handleAddWorker} />

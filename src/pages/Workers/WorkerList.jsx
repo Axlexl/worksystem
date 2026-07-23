@@ -1,7 +1,7 @@
 import WorkerCard from "./WorkerCard";
 import { useThemeMode } from "../../context/ThemeContext";
 
-function WorkerList({ workers, onView, onEdit, onDelete }) {
+function WorkerList({ workers, onView, onEdit, onDelete, onToggleStatus }) {
   const { darkMode } = useThemeMode();
 
   const cardBg      = darkMode ? "#1E293B" : "#FFFFFF";
@@ -47,6 +47,7 @@ function WorkerList({ workers, onView, onEdit, onDelete }) {
           onView={onView}
           onEdit={onEdit}
           onDelete={onDelete}
+          onToggleStatus={onToggleStatus}
         />
       ))}
     </div>
