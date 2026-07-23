@@ -86,6 +86,13 @@ function Attendance() {
     setAttendanceRecords((p) => ({ ...p, [selectedDate]: records }));
   };
 
+  const clearAll = async () => {
+    // Mark everyone Absent (removes them from pay — same as no record but explicit)
+    const records = workers.reduce((acc, w) => ({ ...acc, [w.id]: { status: "Absent", hours: 0 } }), {});
+    await dbSetManyAttendance(userId, selectedDate, records);
+    setAttendanceRecords((p) => ({ ...p, [selectedDate]: records }));
+  };
+
   const recentDates = Object.keys(attendanceRecords).sort((a, b) => (a < b ? 1 : -1)).slice(0, 7);
 
   // Calendar
@@ -143,6 +150,9 @@ function Attendance() {
               sx={{ width: 160 }} />
             <Button variant="contained" size="small" onClick={markAllPresent} startIcon={<MdCheckCircle size={15} />}>
               Mark All Present (8h)
+            </Button>
+            <Button variant="outlined" color="error" size="small" onClick={clearAll} startIcon={<MdCancel size={15} />}>
+              Clear All
             </Button>
           </div>
         </div>

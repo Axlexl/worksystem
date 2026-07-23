@@ -14,7 +14,7 @@ import {
 import { useThemeMode } from "../../context/ThemeContext";
 import {
   dbAddPayrollRecord, dbDeletePayrollRecord, dbGetPayrollWorkerRows,
-  dbSetAttendance, dbUpdatePayrollRecord,
+  dbSetAttendance, dbUpdatePayrollRecord, dbUpdateWorker,
 } from "../../services/db.service";
 
 // Returns the Saturday that ends the pay week for a given dayjs date
@@ -43,7 +43,7 @@ function SummaryCard({ icon: Icon, label, value, iconBg, iconColor, highlight, d
 }
 
 function Payroll() {
-  const { workers, attendanceRecords, setAttendanceRecords, userId, payrollHistory, setPayrollHistory } = useOutletContext();
+  const { workers, setWorkers, attendanceRecords, setAttendanceRecords, userId, payrollHistory, setPayrollHistory } = useOutletContext();
   const { darkMode } = useThemeMode();
 
   const cardBg      = darkMode ? "#1E293B" : "#FFFFFF";
@@ -283,15 +283,28 @@ function Payroll() {
       cashAdvance:      totalAdvance,
       absentDeduction:  totalAbsent,
       netPay:           totalNet,
-      // Snapshot every worker's current figures at the time of payroll
+      // Snapshot every worker's figures frozen at this moment
       workerRows:       payrollRows,
     };
     const saved = await dbAddPayrollRecord(userId, rec);
     setPayrollHistory((prev) => [saved, ...prev]);
-    // Cache the snapshot rows immediately so accordion shows them right away
     setRecordRows((prev) => ({ ...prev, [saved.id]: payrollRows }));
     setExpandedRecord(saved.id);
-    // Jump back to current week after running payroll for a past week
+
+    // ── Zero out cash advances after payroll ─────────────────────────────
+    // They've been deducted — reset to 0 so next week starts clean
+    const updatedWorkers = await Promise.all(
+      workers.map(async (w) => {
+        if (w.cashAdvance > 0) {
+          const zeroed = { ...w, cashAdvance: 0 };
+          await dbUpdateWorker(userId, zeroed);
+          return zeroed;
+        }
+        return w;
+      })
+    );
+    setWorkers(updatedWorkers);
+
     setWeekOffset(0);
   };
 
@@ -325,8 +338,11 @@ function Payroll() {
       }, 0);
       const grossPay        = (worker.dailyRate / 8) * totalHours;
       const absentDeduction = 0;
-      const netPay          = Math.max(grossPay - worker.cashAdvance, 0);
-      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded, presentDays, totalHours };
+      // Never use current cashAdvance for historical fallback rows —
+      // the live value changes every time an advance is added.
+      // Show 0 so old records are not retroactively corrupted.
+      const netPay = Math.max(grossPay, 0);
+      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded, presentDays, totalHours, cashAdvance: 0, _noSnapshot: true };
     });
   }, [recordRows, workers, attendanceRecords]);
 
