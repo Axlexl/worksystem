@@ -99,6 +99,7 @@ db.exec(`
     worker_id  INTEGER NOT NULL,
     date       TEXT NOT NULL,
     status     TEXT NOT NULL DEFAULT 'Present',
+    hours      REAL NOT NULL DEFAULT 8,
     UNIQUE(user_id, worker_id, date),
     FOREIGN KEY (user_id)   REFERENCES users(id)   ON DELETE CASCADE,
     FOREIGN KEY (worker_id) REFERENCES workers(id) ON DELETE CASCADE
@@ -169,6 +170,11 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 `);
+
+// ── migrate: add hours column if not present ──────────────────────────────────
+try {
+  db.prepare("ALTER TABLE attendance ADD COLUMN hours REAL NOT NULL DEFAULT 8").run();
+} catch {}  // column already exists — ignore
 
 // ── seed default admin ────────────────────────────────────────────────────────
 const existing = db.prepare("SELECT id FROM users WHERE username = 'admin'").get();
@@ -334,27 +340,31 @@ ipcMain.handle("attendance:getAll", (_, { userId }) => {
   const result = {};
   for (const row of rows) {
     if (!result[row.date]) result[row.date] = {};
-    result[row.date][row.worker_id] = row.status;
+    // Store object { status, hours } so UI can read both
+    result[row.date][row.worker_id] = { status: row.status, hours: row.hours ?? 8 };
   }
   return result;
 });
 
-ipcMain.handle("attendance:set", (_, { userId, workerId, date, status }) => {
+ipcMain.handle("attendance:set", (_, { userId, workerId, date, status, hours }) => {
   db.prepare(`
-    INSERT INTO attendance (user_id, worker_id, date, status) VALUES (?, ?, ?, ?)
-    ON CONFLICT(user_id, worker_id, date) DO UPDATE SET status=excluded.status
-  `).run(userId, workerId, date, status);
+    INSERT INTO attendance (user_id, worker_id, date, status, hours) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, worker_id, date) DO UPDATE SET status=excluded.status, hours=excluded.hours
+  `).run(userId, workerId, date, status, hours ?? 8);
   return { ok: true };
 });
 
 ipcMain.handle("attendance:setMany", (_, { userId, date, records }) => {
+  // records: { [workerId]: { status, hours } }  OR legacy { [workerId]: "Present" }
   const upsert = db.prepare(`
-    INSERT INTO attendance (user_id, worker_id, date, status) VALUES (?, ?, ?, ?)
-    ON CONFLICT(user_id, worker_id, date) DO UPDATE SET status=excluded.status
+    INSERT INTO attendance (user_id, worker_id, date, status, hours) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, worker_id, date) DO UPDATE SET status=excluded.status, hours=excluded.hours
   `);
   const tx = db.transaction((recs) => {
-    for (const [workerId, status] of Object.entries(recs)) {
-      upsert.run(userId, Number(workerId), date, status);
+    for (const [workerId, val] of Object.entries(recs)) {
+      const status = typeof val === "object" ? val.status : val;
+      const hours  = typeof val === "object" ? (val.hours ?? 8) : 8;
+      upsert.run(userId, Number(workerId), date, status, hours);
     }
   });
   tx(records);

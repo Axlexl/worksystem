@@ -112,23 +112,30 @@ function Payroll() {
     const dates = Array.from({ length: 6 }, (_, i) => start.add(i, "day"));
 
     return workers.map((worker) => {
-      // Only days marked Present count toward pay
-      const presentDays  = dates.reduce((count, date) => {
-        const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
-        return count + (s === "Present" ? 1 : 0);
+      const getStatus = (rec) => typeof rec === "object" && rec !== null ? rec.status : (rec || "");
+      const getHours  = (rec) => typeof rec === "object" && rec !== null ? (rec.hours ?? 8) : 8;
+
+      const totalHours   = dates.reduce((sum, date) => {
+        const rec = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        return sum + (getStatus(rec) === "Present" ? getHours(rec) : 0);
       }, 0);
-      // Absent/Leave shown for info — already excluded from gross
+      const presentDays  = dates.reduce((count, date) => {
+        const rec = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        return count + (getStatus(rec) === "Present" ? 1 : 0);
+      }, 0);
       const absentDays   = dates.reduce((count, date) => {
-        const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        const rec = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        const s = getStatus(rec);
         return count + (s === "Absent" || s === "Leave" ? 1 : 0);
       }, 0);
       const daysRecorded = dates.reduce((count, date) => {
-        return count + (attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id] ? 1 : 0);
+        const rec = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        return count + (getStatus(rec) ? 1 : 0);
       }, 0);
-      const grossPay        = worker.dailyRate * presentDays;
-      const absentDeduction = 0; // gross already excludes non-present days — no double deduction
+      const grossPay        = (worker.dailyRate / 8) * totalHours;
+      const absentDeduction = 0;
       const netPay          = Math.max(grossPay - worker.cashAdvance, 0);
-      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded, presentDays };
+      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded, presentDays, totalHours };
     });
   }, [workers, attendanceRecords, weekOffset]);
 
@@ -160,29 +167,49 @@ function Payroll() {
   const [editWorker, setEditWorker] = useState(null);
 
   const openEditWorker = (worker) => {
-    // Pre-fill local status from current attendanceRecords for the selected week
     const local = {};
     periodDates.forEach((d) => {
       const key = d.format("YYYY-MM-DD");
-      local[key] = attendanceRecords[key]?.[worker.id] || "";
+      const rec = attendanceRecords[key]?.[worker.id];
+      const { status, hours } = typeof rec === "object" && rec !== null
+        ? { status: rec.status || "", hours: rec.hours ?? 8 }
+        : { status: rec || "", hours: 8 };
+      local[key] = { status, hours };
     });
     setEditWorker({ worker, localStatus: local });
   };
 
   const handleEditStatusChange = (dateKey, val) => {
     if (!val) return;
-    setEditWorker((prev) => ({ ...prev, localStatus: { ...prev.localStatus, [dateKey]: val } }));
+    setEditWorker((prev) => ({
+      ...prev,
+      localStatus: {
+        ...prev.localStatus,
+        [dateKey]: { ...prev.localStatus[dateKey], status: val },
+      },
+    }));
+  };
+
+  const handleEditHoursChange = (dateKey, hours) => {
+    const h = Math.min(12, Math.max(0.5, Number(hours) || 8));
+    setEditWorker((prev) => ({
+      ...prev,
+      localStatus: {
+        ...prev.localStatus,
+        [dateKey]: { ...prev.localStatus[dateKey], hours: h },
+      },
+    }));
   };
 
   const handleSaveEditWorker = async () => {
     if (!editWorker) return;
     const { worker, localStatus } = editWorker;
-    for (const [dateKey, status] of Object.entries(localStatus)) {
-      if (status) {
-        await dbSetAttendance(userId, worker.id, dateKey, status);
+    for (const [dateKey, rec] of Object.entries(localStatus)) {
+      if (rec.status) {
+        await dbSetAttendance(userId, worker.id, dateKey, rec.status, rec.hours ?? 8);
         setAttendanceRecords((prev) => ({
           ...prev,
-          [dateKey]: { ...(prev[dateKey] || {}), [worker.id]: status },
+          [dateKey]: { ...(prev[dateKey] || {}), [worker.id]: { status: rec.status, hours: rec.hours ?? 8 } },
         }));
       }
     }
@@ -277,21 +304,29 @@ function Payroll() {
     const start = end.subtract(5, "day");
     const dates = Array.from({ length: 6 }, (_, i) => start.add(i, "day"));
     return workers.map((worker) => {
+      const getStatus = (rec) => typeof rec === "object" && rec !== null ? rec.status : (rec || "");
+      const getHours  = (rec) => typeof rec === "object" && rec !== null ? (rec.hours ?? 8) : 8;
+      const totalHours = dates.reduce((sum, date) => {
+        const rec = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        return sum + (getStatus(rec) === "Present" ? getHours(rec) : 0);
+      }, 0);
       const presentDays = dates.reduce((count, date) => {
-        const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
-        return count + (s === "Present" ? 1 : 0);
+        const rec = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        return count + (getStatus(rec) === "Present" ? 1 : 0);
       }, 0);
       const absentDays = dates.reduce((count, date) => {
-        const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        const rec = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        const s = getStatus(rec);
         return count + (s === "Absent" || s === "Leave" ? 1 : 0);
       }, 0);
       const daysRecorded = dates.reduce((count, date) => {
-        return count + (attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id] ? 1 : 0);
+        const rec = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        return count + (getStatus(rec) ? 1 : 0);
       }, 0);
-      const grossPay        = worker.dailyRate * presentDays;
+      const grossPay        = (worker.dailyRate / 8) * totalHours;
       const absentDeduction = 0;
       const netPay          = Math.max(grossPay - worker.cashAdvance, 0);
-      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded, presentDays };
+      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded, presentDays, totalHours };
     });
   }, [recordRows, workers, attendanceRecords]);
 
@@ -431,12 +466,14 @@ function Payroll() {
                 {/* Per-day attendance pills */}
                 {periodDates.map((d) => {
                   const key    = d.format("YYYY-MM-DD");
-                  const status = attendanceRecords[key]?.[row.id] || "";
+                  const rec    = attendanceRecords[key]?.[row.id];
+                  const status = typeof rec === "object" && rec !== null ? rec.status : (rec || "");
+                  const hours  = typeof rec === "object" && rec !== null ? (rec.hours ?? 8) : 8;
                   const colors = STATUS_COLOR[status] || STATUS_COLOR[""];
                   return (
                     <div key={key} style={{ display: "flex", justifyContent: "center", alignItems: "center", padding: "6px 2px" }}>
                       <div style={{ padding: "3px 7px", borderRadius: "6px", background: colors.bg, color: colors.text, fontSize: "0.625rem", fontWeight: 700, textAlign: "center", minWidth: "44px", lineHeight: 1.4, letterSpacing: "0.02em" }}>
-                        {status || "—"}
+                        {status ? `${status}${status === "Present" && hours !== 8 ? ` ${hours}h` : ""}` : "—"}
                       </div>
                     </div>
                   );
@@ -813,32 +850,31 @@ function Payroll() {
           <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
             {periodDates.map((d) => {
               const key     = d.format("YYYY-MM-DD");
-              const current = editWorker?.localStatus[key] || "";
+              const rec     = editWorker?.localStatus[key] || { status: "", hours: 8 };
+              const current = rec.status || "";
+              const hours   = rec.hours ?? 8;
               return (
-                <div key={key} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                <div key={key} style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
                   <div style={{ minWidth: "90px" }}>
                     <div style={{ fontSize: "0.8125rem", fontWeight: 700, color: textPrimary }}>{d.format("ddd")}</div>
                     <div style={{ fontSize: "0.75rem", color: textSub }}>{d.format("MMM D, YYYY")}</div>
                   </div>
-                  <ToggleButtonGroup
-                    value={current}
-                    exclusive
-                    onChange={(_, val) => { if (val) handleEditStatusChange(key, val); }}
-                    size="small"
-                    sx={{
-                      flexWrap: "wrap",
-                      "& .MuiToggleButton-root": {
-                        fontSize: "0.75rem", px: "10px",
-                        color: darkMode ? "#94A3B8" : undefined,
-                        borderColor: darkMode ? "#334155" : undefined,
-                        "&.Mui-selected": { background: darkMode ? "rgba(37,99,235,0.2)" : undefined, color: darkMode ? "#60A5FA" : undefined },
-                      },
-                    }}
-                  >
+                  <ToggleButtonGroup value={current} exclusive onChange={(_, val) => { if (val) handleEditStatusChange(key, val); }} size="small"
+                    sx={{ flexWrap: "wrap", "& .MuiToggleButton-root": { fontSize: "0.75rem", px: "10px", color: darkMode ? "#94A3B8" : undefined, borderColor: darkMode ? "#334155" : undefined, "&.Mui-selected": { background: darkMode ? "rgba(37,99,235,0.2)" : undefined, color: darkMode ? "#60A5FA" : undefined } } }}>
                     {["Present", "Absent", "Leave"].map((opt) => (
                       <ToggleButton key={opt} value={opt}>{opt}</ToggleButton>
                     ))}
                   </ToggleButtonGroup>
+                  {current === "Present" && (
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <span style={{ fontSize: "0.75rem", color: textSub }}>Hrs:</span>
+                      <input type="number" min="0.5" max="12" step="0.5" value={hours}
+                        onChange={(e) => handleEditHoursChange(key, e.target.value)}
+                        style={{ width: "56px", padding: "4px 6px", borderRadius: "6px", border: `1px solid ${cardBorder}`, background: darkMode ? "#0F172A" : "#F8FAFC", color: textPrimary, fontSize: "0.875rem", textAlign: "center", outline: "none" }}
+                        onFocus={(e) => (e.target.style.borderColor = "#2563EB")}
+                        onBlur={(e) => (e.target.style.borderColor = cardBorder)} />
+                    </div>
+                  )}
                 </div>
               );
             })}

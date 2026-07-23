@@ -51,15 +51,16 @@ export async function dbGetAttendance(userId) {
   return lsGet(lsKey(userId, "attendance"), {});
 }
 
-export async function dbSetAttendance(userId, workerId, date, status) {
-  if (isElectron) return window.api.setAttendance({ userId, workerId, date, status });
+export async function dbSetAttendance(userId, workerId, date, status, hours = 8) {
+  if (isElectron) return window.api.setAttendance({ userId, workerId, date, status, hours });
   const all = lsGet(lsKey(userId, "attendance"), {});
-  const next = { ...all, [date]: { ...(all[date] || {}), [workerId]: status } };
+  const next = { ...all, [date]: { ...(all[date] || {}), [workerId]: { status, hours } } };
   lsSet(lsKey(userId, "attendance"), next);
   return { ok: true };
 }
 
 export async function dbSetManyAttendance(userId, date, records) {
+  // records: { [workerId]: { status, hours } }
   if (isElectron) return window.api.setManyAttendance({ userId, date, records });
   const all = lsGet(lsKey(userId, "attendance"), {});
   const next = { ...all, [date]: { ...(all[date] || {}), ...records } };

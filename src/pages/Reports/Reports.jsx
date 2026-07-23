@@ -162,21 +162,29 @@ function Reports() {
     const start = end.subtract(5, "day");
     const dates = Array.from({ length: 6 }, (_, i) => start.add(i, "day"));
     return workers.map((worker) => {
+      const getStatus = (rec) => typeof rec === "object" && rec !== null ? rec.status : (rec || "");
+      const getHours  = (rec) => typeof rec === "object" && rec !== null ? (rec.hours ?? 8) : 8;
+      const totalHours = dates.reduce((sum, date) => {
+        const rec = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        return sum + (getStatus(rec) === "Present" ? getHours(rec) : 0);
+      }, 0);
       const presentDays = dates.reduce((count, date) => {
-        const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
-        return count + (s === "Present" ? 1 : 0);
+        const rec = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        return count + (getStatus(rec) === "Present" ? 1 : 0);
       }, 0);
       const absentDays = dates.reduce((count, date) => {
-        const s = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        const rec = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        const s = getStatus(rec);
         return count + (s === "Absent" || s === "Leave" ? 1 : 0);
       }, 0);
       const daysRecorded = dates.reduce((count, date) => {
-        return count + (attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id] ? 1 : 0);
+        const rec = attendanceRecords[date.format("YYYY-MM-DD")]?.[worker.id];
+        return count + (getStatus(rec) ? 1 : 0);
       }, 0);
-      const grossPay        = worker.dailyRate * presentDays;
+      const grossPay        = (worker.dailyRate / 8) * totalHours;
       const absentDeduction = 0;
       const netPay          = Math.max(grossPay - worker.cashAdvance, 0);
-      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded, presentDays };
+      return { ...worker, grossPay, absentDays, absentDeduction, netPay, daysRecorded, presentDays, totalHours };
     });
   };
 
